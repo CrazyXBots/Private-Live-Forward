@@ -227,7 +227,7 @@ async def settings_query(bot, query):
      buttons.append([InlineKeyboardButton('back', 
                       callback_data="settings#main")])
      await query.message.edit_text(
-        "<b><u>CUSTOM BUTTON</b></u>\n\n<b>You can set a inline button to messages.</b>\n\n<b><u>FORMAT:</b></u>\n`[Forward bot][buttonurl:https://t.me/mychannelurl]`\n",
+        "<b><u>CUSTOM BUTTON</b></u>\n\n<b>You can set a inline button to messages.</b>\n\n<b><u>FORMAT: \nSingle Button in a row:</b></u> \n\n`[Forward bot][buttonurl:https://t.me/prime_spot]` \n\nMore than one button in same row: \n\n`[forward bot][buttonurl:https://t.me/prime_spot]\n[forward bot][buttonurl:https://t.me/prime_spot]`\n",
         reply_markup=InlineKeyboardMarkup(buttons))
 
   elif type=="addbutton":
