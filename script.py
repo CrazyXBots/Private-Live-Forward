@@ -39,7 +39,7 @@ class  Script(object):
 ╔════❰ ғᴏʀᴡᴀʀᴅ ʙᴏᴛ ❱═❍⊱❁۪۪
 ║╭━━━━━━━━━━━━━━━➣
 ║┣⪼📃ʙᴏᴛ : [Fᴏʀᴡᴀᴅ Bᴏᴛ](https://t.me/Forward_MsBot)
-║┣⪼👦Cʀᴇᴀᴛᴏʀ : [Kɪɴɢ VJ 👑](https://t.me/Prime_SpoTBot)
+║┣⪼👦Cʀᴇᴀᴛᴏʀ : [King Mahi👑](https://t.me/Prime_SpoTBot)
 ║┣⪼🤖Uᴘᴅᴀᴛᴇ : [Prime SpoT](https://t.me/Prime_SpoT)
 ║┣⪼📡Hᴏsᴛᴇᴅ ᴏɴ : Sᴜᴘᴇʀ Fᴀsᴛ
 ║┣⪼🗣️Lᴀɴɢᴜᴀɢᴇ : Pʏᴛʜᴏɴ3
