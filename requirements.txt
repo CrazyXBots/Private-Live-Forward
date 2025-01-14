@@ -1,3 +1,5 @@
+pyromod
+pyrogram==2.0.93
 pyrofork
 tgcrypto
 pyropatch
