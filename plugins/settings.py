@@ -160,6 +160,26 @@ async def settings_query(bot, query):
         "<b>successfully updated</b>",
         reply_markup=InlineKeyboardMarkup(buttons))
 
+   elif type=="speed":
+     buttons = [
+        [
+        InlineKeyboardButton("10 files/m","setspeed#10"),
+        InlineKeyboardButton("20 files/m","setspeed#20"),
+        InlineKeyboardButton("30 files/m","setspeed#30")
+        ],
+        [
+        InlineKeyboardButton("40 files/m","setspeed#40"),
+        InlineKeyboardButton("50 files/m","setspeed#50"),
+        InlineKeyboardButton("60 files/m","setspeed#60")
+        ],
+        [InlineKeyboardButton('⫷ Back', callback_data="settings#extra")]
+     ]
+
+     await query.message.edit_text(
+        "<b>⚡ FORWARD SPEED CONTROL</b>\n\nSelect how many files per minute you want the bot to forward.",
+        reply_markup=InlineKeyboardMarkup(buttons)
+     )
+   
   elif type=="caption":
      buttons = []
      data = await get_configs(user_id)
@@ -716,6 +736,15 @@ async def next_filters_buttons(user_id):
        ]]
   return InlineKeyboardMarkup(buttons) 
 
+
+@Client.on_callback_query(filters.regex(r'^setspeed'))
+async def set_speed_handler(client, query):
+    user_id = query.from_user.id
+    speed = int(query.data.split("#")[1])
+
+    await db.set_speed(user_id, speed)
+
+    await query.answer(f"Speed set to {speed} files per minute", show_alert=True)
 # Don't Remove Credit Tg - @VJ_Botz
 # Subscribe YouTube Channel For Amazing Bot https://youtube.com/@Tech_VJ
 # Ask Doubt on telegram @KingVJ01
