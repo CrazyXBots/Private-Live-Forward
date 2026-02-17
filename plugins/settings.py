@@ -161,24 +161,29 @@ async def settings_query(bot, query):
         reply_markup=InlineKeyboardMarkup(buttons))
 
   elif type=="speed":
-     buttons = [
+    buttons = [
         [
-        InlineKeyboardButton("10 files/m","setspeed#10"),
-        InlineKeyboardButton("20 files/m","setspeed#20"),
-        InlineKeyboardButton("30 files/m","setspeed#30")
+        InlineKeyboardButton("🐢 10/m (Ultra Safe)", "setspeed#10"),
+        InlineKeyboardButton("🟢 20/m (Safe)", "setspeed#20"),
+        InlineKeyboardButton("⭐ 30/m (Recommended)", "setspeed#30"),
         ],
         [
-        InlineKeyboardButton("40 files/m","setspeed#40"),
-        InlineKeyboardButton("50 files/m","setspeed#50"),
-        InlineKeyboardButton("60 files/m","setspeed#60")
+        InlineKeyboardButton("🟡 40/m (Risk)", "setspeed#40"),
+        InlineKeyboardButton("🔴 50/m (Danger)", "setspeed#50"),
+        InlineKeyboardButton("☠️ 60/m (Ban Risk)", "setspeed#60"),
         ],
-        [InlineKeyboardButton('⫷ Back', callback_data="settings#extra")]
-     ]
+        [InlineKeyboardButton("« Back", callback_data="settings#extra")]
+    ]
 
-     await query.message.edit_text(
-        "<b>⚡ FORWARD SPEED CONTROL</b>\n\nSelect how many files per minute you want the bot to forward.",
+    await query.message.edit_text(
+        "<b>⚡ FORWARD SPEED CONTROL</b>\n\n"
+        "Choose forwarding speed.\n\n"
+        "🟢 Safe = No restriction\n"
+        "🟡 Risk = FloodWait possible\n"
+        "🔴 Danger = Account may get temporary restricted\n"
+        "☠️ Ban Risk = Telegram spam protection may block your account",
         reply_markup=InlineKeyboardMarkup(buttons)
-     )
+    )
    
   elif type=="caption":
      buttons = []
