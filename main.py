@@ -5,6 +5,7 @@
 import asyncio, logging
 from config import Config
 from pyrogram import Client as VJ, idle
+from pyrogram.errors import RPCError
 from typing import Union, Optional, AsyncGenerator
 from logging.handlers import RotatingFileHandler
 from plugins.regix import restart_forwards
@@ -62,11 +63,21 @@ if __name__ == "__main__":
                 yield message
                 current += 1
                
+    async def keep_alive():
+    while True:
+        try:
+            await VJBot.get_me()
+            print("[KEEPALIVE] connection refreshed")
+        except RPCError:
+            print("[KEEPALIVE] reconnecting...")
+        await asyncio.sleep(60)
+    
     async def main():
         await VJBot.start()
         bot_info  = await VJBot.get_me()
         await restart_forwards(VJBot)
         print("Bot Started.")
+        asyncio.create_task(keep_alive())
         await idle()
 
     asyncio.get_event_loop().run_until_complete(main())
@@ -74,4 +85,5 @@ if __name__ == "__main__":
 # Don't Remove Credit Tg - @VJ_Botz
 # Subscribe YouTube Channel For Amazing Bot https://youtube.com/@Tech_VJ
 # Ask Doubt on telegram @KingVJ01
+
 
