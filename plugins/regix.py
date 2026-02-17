@@ -163,7 +163,15 @@ async def pub_(bot, message):
                    details = {"msg_id": message.id, "media": media(message), "caption": new_caption, 'button': button, "protect": protect}
                    await copy(user, client, details, m, sts)
                    sts.add('total_files')
-                   await asyncio.sleep(4) 
+                   uid = m.chat.id
+                   speed = await db.get_speed(uid)
+
+                   # safety protection
+                   if speed is None or speed <= 0:
+                       speed = 20
+
+                   delay = 60 / speed
+                   await asyncio.sleep(delay)
         except Exception as e:
             await msg_edit(m, f'<b>ERROR:</b>\n<code>{e}</code>', wait=True)
             print(e)
