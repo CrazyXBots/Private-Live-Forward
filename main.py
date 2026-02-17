@@ -64,13 +64,13 @@ if __name__ == "__main__":
                 current += 1
                
     async def keep_alive():
-    while True:
-        try:
-            await VJBot.get_me()
-            print("[KEEPALIVE] connection refreshed")
-        except RPCError:
-            print("[KEEPALIVE] reconnecting...")
-        await asyncio.sleep(60)
+        while True:
+            try:
+                await VJBot.get_me()
+                print("[KEEPALIVE] connection refreshed")
+            except RPCError:
+                print("[KEEPALIVE] reconnecting...")
+            await asyncio.sleep(60)
     
     async def main():
         await VJBot.start()
@@ -85,5 +85,6 @@ if __name__ == "__main__":
 # Don't Remove Credit Tg - @VJ_Botz
 # Subscribe YouTube Channel For Amazing Bot https://youtube.com/@Tech_VJ
 # Ask Doubt on telegram @KingVJ01
+
 
 
