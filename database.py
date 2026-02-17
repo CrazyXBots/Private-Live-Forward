@@ -209,5 +209,20 @@ class Db:
    
     async def update_forward(self, user_id, details):
         await self.nfy.update_one({'user_id': user_id}, {'$set': {'details': details}})
-        
+
+# ================= SPEED CONTROL =================
+
+async def set_speed(self, user_id, speed):
+    await self.nfy.update_one(
+        {"user_id": int(user_id)},
+        {"$set": {"speed": speed}},
+        upsert=True
+    )
+
+async def get_speed(self, user_id):
+    data = await self.nfy.find_one({"user_id": int(user_id)})
+    if not data:
+        return 20
+    return data.get("speed", 20)
+                                         
 db = Db(Config.DATABASE_URI, Config.DATABASE_NAME)
