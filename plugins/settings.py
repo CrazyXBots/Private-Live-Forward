@@ -160,7 +160,7 @@ async def settings_query(bot, query):
         "<b>successfully updated</b>",
         reply_markup=InlineKeyboardMarkup(buttons))
 
-   elif type=="speed":
+  elif type=="speed":
      buttons = [
         [
         InlineKeyboardButton("10 files/m","setspeed#10"),
