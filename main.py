@@ -80,11 +80,15 @@ if __name__ == "__main__":
         asyncio.create_task(keep_alive())
         await idle()
 
-    asyncio.get_event_loop().run_until_complete(main())
-
+    if __name__ == "__main__":
+        asyncio.set_event_loop(asyncio.new_event_loop())
+        loop = asyncio.get_event_loop()
+        loop.run_until_complete(main())
+     
 # Don't Remove Credit Tg - @VJ_Botz
 # Subscribe YouTube Channel For Amazing Bot https://youtube.com/@Tech_VJ
 # Ask Doubt on telegram @KingVJ01
+
 
 
 
