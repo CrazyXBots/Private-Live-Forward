@@ -478,6 +478,9 @@ def extra_buttons():
        InlineKeyboardButton('🕹 Extensions',
                     callback_data=f'settings#get_extension')
        ],[
+       InlineKeyboardButton('⚡ Forward Speed',
+                    callback_data=f'settings#speed')
+       ],[
        InlineKeyboardButton('⫷ Bᴀᴄᴋ',
                     callback_data=f'settings#main')
        ]]
