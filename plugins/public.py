@@ -47,26 +47,53 @@ async def run(bot, message):
        toid = channels[0]['chat_id']
        to_title = channels[0]['title']
     fromid = await bot.ask(message.chat.id, Script.FROM_MSG, reply_markup=ReplyKeyboardRemove())
+
     if fromid.text and fromid.text.startswith('/'):
         await message.reply(Script.CANCEL)
-        return 
+        return
+
+    # USER SENT A POST LINK
     if fromid.text and not fromid.forward_date:
-        regex = re.compile("(https://)?(t\.me/|telegram\.me/|telegram\.dog/)(c/)?(\d+|[a-zA-Z_0-9]+)/(\d+)$")
-        match = regex.match(fromid.text.replace("?single", ""))
-        if not match:
-            return await message.reply('Invalid link')
-        chat_id = match.group(4)
-        last_msg_id = int(match.group(5))
-        if chat_id.isnumeric():
-            chat_id  = int(("-100" + chat_id))
-    elif fromid.forward_from_chat.type in [enums.ChatType.CHANNEL, 'supergroup']:
+
+        link = fromid.text.strip().replace("?single", "")
+
+        # private channel  t.me/c/xxxx/yyyy
+        private = re.search(r"(?:https?://)?t\.me/c/(\d+)/(\d+)", link)
+
+        # public channel   t.me/channel/yyyy
+        public = re.search(r"(?:https?://)?t\.me/([A-Za-z0-9_]+)/(\d+)", link)
+
+        if private:
+            internal_id = private.group(1)
+            last_msg_id = int(private.group(2))
+            chat_id = int("-100" + internal_id)
+
+        elif public:
+            chat_id = public.group(1)
+            last_msg_id = int(public.group(2))
+
+        else:
+            return await message.reply("❌ Invalid Telegram link")
+
+
+    # USER FORWARDED A MESSAGE
+    elif fromid.forward_from_chat and fromid.forward_from_chat.type in [enums.ChatType.CHANNEL, enums.ChatType.SUPERGROUP]:
+
         last_msg_id = fromid.forward_from_message_id
-        chat_id = fromid.forward_from_chat.username or fromid.forward_from_chat.id
-        if last_msg_id == None:
-           return await message.reply_text("**This may be a forwarded message from a group and sended by anonymous admin. instead of this please send last message link from group**")
+
+        if fromid.forward_from_chat.username:
+            chat_id = fromid.forward_from_chat.username
+        else:
+            chat_id = fromid.forward_from_chat.id
+
+        if not last_msg_id:
+            return await message.reply_text(
+                "❌ Anonymous admin message detected.\nSend the post LINK instead."
+            )
+
     else:
-        await message.reply_text("**invalid !**")
-        return 
+        await message.reply_text("❌ Invalid input")
+        return
     try:
         title = (await bot.get_chat(chat_id)).title
   #  except ChannelInvalid:
