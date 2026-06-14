@@ -535,6 +535,10 @@ def main_buttons():
        InlineKeyboardButton('Exᴛʀᴀ Sᴇᴛᴛɪɴɢs 🧪',
                     callback_data=f'settings#extra')
        ],[
+       # ── Live Forward (new) ──
+       InlineKeyboardButton('📡 Lɪᴠᴇ Fᴏʀᴡᴀʀᴅ',
+                    callback_data=f'lf#panel')
+       ],[
        InlineKeyboardButton('⫷ Bᴀᴄᴋ',
                     callback_data=f'help')
        ]]
