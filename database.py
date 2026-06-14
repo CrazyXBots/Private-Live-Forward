@@ -225,64 +225,118 @@ class Db:
             return 20
         return user.get("speed", 20)
 
-# ================= LIVE FORWARD ================= #
+# ================= PREMIUM ================= #
 
-    async def get_live_forward_config(self, user_id: int) -> dict:
-        """Return the live-forward config for a user, with safe defaults."""
-        default = {
-            "active": False,
-            "destination_id": None,
-            "destination_title": None,
-            "source_channels": [],   # list of {"chat_id": int, "title": str}
-            "forward_tag": False,
-            "caption": None,
-            "filters": {
-                "text": True, "document": True, "video": True,
-                "photo": True, "audio": True, "voice": True,
-                "animation": True, "sticker": True, "poll": True
-            }
-        }
-        user = await self.col.find_one({"id": int(user_id)})
-        if user:
-            return user.get("live_forward", default)
-        return default
-
-    async def _update_live_forward(self, user_id: int, data: dict):
+    async def set_premium(self, user_id: int, status: bool):
         await self.col.update_one(
             {"id": int(user_id)},
-            {"$set": {"live_forward": data}},
+            {"$set": {"is_premium": status}},
             upsert=True
         )
 
-    async def set_live_forward_destination(self, user_id: int, chat_id: int, title: str):
-        cfg = await self.get_live_forward_config(user_id)
-        cfg["destination_id"]    = chat_id
-        cfg["destination_title"] = title
-        await self._update_live_forward(user_id, cfg)
+    async def is_premium_user(self, user_id: int) -> bool:
+        user = await self.col.find_one({"id": int(user_id)})
+        if not user:
+            return False
+        return user.get("is_premium", False)
 
-    async def add_live_source_channel(self, user_id: int, chat_id: int, title: str):
-        cfg     = await self.get_live_forward_config(user_id)
-        sources = cfg.get("source_channels", [])
-        if not any(s["chat_id"] == chat_id for s in sources):
-            sources.append({"chat_id": chat_id, "title": title})
-        cfg["source_channels"] = sources
-        await self._update_live_forward(user_id, cfg)
+# ================= LIVE FORWARD (multi-connection) ================= #
+#
+#  Each user has a list of "connections" stored in live_connections[]:
+#    {
+#      "index":        int,   # 0–9
+#      "active":       bool,
+#      "source_id":    int | None,
+#      "source_title": str | None,
+#      "dest_id":      int | None,
+#      "dest_title":   str | None,
+#    }
+# ================================================================== #
 
-    async def remove_live_source_channel(self, user_id: int, chat_id: int):
-        cfg     = await self.get_live_forward_config(user_id)
-        sources = cfg.get("source_channels", [])
-        cfg["source_channels"] = [s for s in sources if s["chat_id"] != chat_id]
-        await self._update_live_forward(user_id, cfg)
+    async def get_live_connections(self, user_id: int) -> list:
+        """Return all live-forward connections for a user."""
+        user = await self.col.find_one({"id": int(user_id)})
+        if not user:
+            return []
+        return user.get("live_connections", [])
 
-    async def set_live_forward_active(self, user_id: int, active: bool):
-        cfg = await self.get_live_forward_config(user_id)
-        cfg["active"] = active
-        await self._update_live_forward(user_id, cfg)
+    async def get_live_connection(self, user_id: int, idx: int) -> dict | None:
+        """Return a single connection by index, or None."""
+        conns = await self.get_live_connections(user_id)
+        for c in conns:
+            if c.get("index") == idx:
+                return c
+        return None
 
-    async def get_all_active_live_forward_users(self) -> list:
-        """Return list of user_ids who have live forward currently active."""
-        cursor = self.col.find({"live_forward.active": True}, {"id": 1})
+    async def add_live_connection(self, user_id: int) -> int:
+        """Append a blank connection and return its index."""
+        conns = await self.get_live_connections(user_id)
+        # Find the next available index (fill gaps from deletions)
+        used  = {c["index"] for c in conns}
+        idx   = next(i for i in range(10) if i not in used)
+        conns.append({
+            "index":        idx,
+            "active":       False,
+            "source_id":    None,
+            "source_title": None,
+            "dest_id":      None,
+            "dest_title":   None,
+        })
+        await self.col.update_one(
+            {"id": int(user_id)},
+            {"$set": {"live_connections": conns}},
+            upsert=True
+        )
+        return idx
+
+    async def _save_live_connections(self, user_id: int, conns: list):
+        await self.col.update_one(
+            {"id": int(user_id)},
+            {"$set": {"live_connections": conns}},
+            upsert=True
+        )
+
+    async def set_live_connection_source(self, user_id: int, idx: int,
+                                          chat_id: int, title: str):
+        conns = await self.get_live_connections(user_id)
+        for c in conns:
+            if c["index"] == idx:
+                c["source_id"]    = chat_id
+                c["source_title"] = title
+                break
+        await self._save_live_connections(user_id, conns)
+
+    async def set_live_connection_dest(self, user_id: int, idx: int,
+                                        chat_id: int, title: str):
+        conns = await self.get_live_connections(user_id)
+        for c in conns:
+            if c["index"] == idx:
+                c["dest_id"]    = chat_id
+                c["dest_title"] = title
+                break
+        await self._save_live_connections(user_id, conns)
+
+    async def set_live_connection_active(self, user_id: int, idx: int, active: bool):
+        conns = await self.get_live_connections(user_id)
+        for c in conns:
+            if c["index"] == idx:
+                c["active"] = active
+                break
+        await self._save_live_connections(user_id, conns)
+
+    async def delete_live_connection(self, user_id: int, idx: int):
+        conns = await self.get_live_connections(user_id)
+        conns = [c for c in conns if c["index"] != idx]
+        await self._save_live_connections(user_id, conns)
+
+    async def get_all_active_live_users(self) -> list:
+        """Return user_ids who have at least one active live-forward connection."""
+        cursor = self.col.find(
+            {"live_connections": {"$elemMatch": {"active": True}}},
+            {"id": 1}
+        )
         return [doc["id"] async for doc in cursor]
 
-                                         
+# ================================================ #
+
 db = Db(Config.DATABASE_URI, Config.DATABASE_NAME)
