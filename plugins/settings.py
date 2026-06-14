@@ -162,22 +162,42 @@ async def settings_query(bot, query):
         reply_markup=InlineKeyboardMarkup(buttons))
 
   elif type=="speed":
+    current_speed = await db.get_speed(user_id)
+
+    # Map speed value → label info
+    speed_options = [
+        (10,  "🐢", "Ultra Safe"),
+        (20,  "🟢", "Safe"),
+        (30,  "⭐", "Recommended"),
+        (40,  "🟡", "Risk"),
+        (50,  "🔴", "Danger"),
+        (60,  "☠️", "Ban Risk"),
+    ]
+
+    def speed_label(val, emoji, name):
+        tick = " ✅" if val == current_speed else ""
+        return InlineKeyboardButton(f"{emoji} {val}/m ({name}){tick}", f"setspeed#{val}")
+
     buttons = [
         [
-        InlineKeyboardButton("🐢 10/m (Ultra Safe)", "setspeed#10"),
-        InlineKeyboardButton("🟢 20/m (Safe)", "setspeed#20"),
-        InlineKeyboardButton("⭐ 30/m (Recommended)", "setspeed#30"),
+            speed_label(10, "🐢", "Ultra Safe"),
+            speed_label(20, "🟢", "Safe"),
+            speed_label(30, "⭐", "Recommended"),
         ],
         [
-        InlineKeyboardButton("🟡 40/m (Risk)", "setspeed#40"),
-        InlineKeyboardButton("🔴 50/m (Danger)", "setspeed#50"),
-        InlineKeyboardButton("☠️ 60/m (Ban Risk)", "setspeed#60"),
+            speed_label(40, "🟡", "Risk"),
+            speed_label(50, "🔴", "Danger"),
+            speed_label(60, "☠️", "Ban Risk"),
         ],
         [InlineKeyboardButton("« Back", callback_data="settings#extra")]
     ]
 
+    # Find label for current speed
+    current_label = next((f"{e} {v}/m ({n})" for v, e, n in speed_options if v == current_speed), f"{current_speed}/m")
+
     await query.message.edit_text(
         "<b>⚡ FORWARD SPEED CONTROL</b>\n\n"
+        f"<b>Current Speed:</b> <code>{current_label}</code>\n\n"
         "Choose forwarding speed.\n\n"
         "🟢 Safe = No restriction\n"
         "🟡 Risk = FloodWait possible\n"
@@ -752,8 +772,51 @@ async def set_speed_handler(client, query):
     speed = int(query.data.split("#")[1])
 
     await db.set_speed(user_id, speed)
+    await query.answer(f"✅ Speed set to {speed} files/min", show_alert=True)
 
-    await query.answer(f"Speed set to {speed} files per minute", show_alert=True)
+    # Refresh the speed panel so the ✅ mark updates immediately
+    speed_options = [
+        (10,  "🐢", "Ultra Safe"),
+        (20,  "🟢", "Safe"),
+        (30,  "⭐", "Recommended"),
+        (40,  "🟡", "Risk"),
+        (50,  "🔴", "Danger"),
+        (60,  "☠️", "Ban Risk"),
+    ]
+
+    def speed_label(val, emoji, name):
+        tick = " ✅" if val == speed else ""
+        return InlineKeyboardButton(f"{emoji} {val}/m ({name}){tick}", f"setspeed#{val}")
+
+    buttons = [
+        [
+            speed_label(10, "🐢", "Ultra Safe"),
+            speed_label(20, "🟢", "Safe"),
+            speed_label(30, "⭐", "Recommended"),
+        ],
+        [
+            speed_label(40, "🟡", "Risk"),
+            speed_label(50, "🔴", "Danger"),
+            speed_label(60, "☠️", "Ban Risk"),
+        ],
+        [InlineKeyboardButton("« Back", callback_data="settings#extra")]
+    ]
+
+    current_label = next((f"{e} {v}/m ({n})" for v, e, n in speed_options if v == speed), f"{speed}/m")
+
+    try:
+        await query.message.edit_text(
+            "<b>⚡ FORWARD SPEED CONTROL</b>\n\n"
+            f"<b>Current Speed:</b> <code>{current_label}</code>\n\n"
+            "Choose forwarding speed.\n\n"
+            "🟢 Safe = No restriction\n"
+            "🟡 Risk = FloodWait possible\n"
+            "🔴 Danger = Account may get temporary restricted\n"
+            "☠️ Ban Risk = Telegram spam protection may block your account",
+            reply_markup=InlineKeyboardMarkup(buttons)
+        )
+    except Exception:
+        pass
 # Don't Remove Credit Tg - @VJ_Botz
 # Subscribe YouTube Channel For Amazing Bot https://youtube.com/@Tech_VJ
 # Ask Doubt on telegram @KingVJ01
