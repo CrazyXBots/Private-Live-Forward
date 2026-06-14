@@ -224,5 +224,65 @@ class Db:
         if not user:
             return 20
         return user.get("speed", 20)
+
+# ================= LIVE FORWARD ================= #
+
+    async def get_live_forward_config(self, user_id: int) -> dict:
+        """Return the live-forward config for a user, with safe defaults."""
+        default = {
+            "active": False,
+            "destination_id": None,
+            "destination_title": None,
+            "source_channels": [],   # list of {"chat_id": int, "title": str}
+            "forward_tag": False,
+            "caption": None,
+            "filters": {
+                "text": True, "document": True, "video": True,
+                "photo": True, "audio": True, "voice": True,
+                "animation": True, "sticker": True, "poll": True
+            }
+        }
+        user = await self.col.find_one({"id": int(user_id)})
+        if user:
+            return user.get("live_forward", default)
+        return default
+
+    async def _update_live_forward(self, user_id: int, data: dict):
+        await self.col.update_one(
+            {"id": int(user_id)},
+            {"$set": {"live_forward": data}},
+            upsert=True
+        )
+
+    async def set_live_forward_destination(self, user_id: int, chat_id: int, title: str):
+        cfg = await self.get_live_forward_config(user_id)
+        cfg["destination_id"]    = chat_id
+        cfg["destination_title"] = title
+        await self._update_live_forward(user_id, cfg)
+
+    async def add_live_source_channel(self, user_id: int, chat_id: int, title: str):
+        cfg     = await self.get_live_forward_config(user_id)
+        sources = cfg.get("source_channels", [])
+        if not any(s["chat_id"] == chat_id for s in sources):
+            sources.append({"chat_id": chat_id, "title": title})
+        cfg["source_channels"] = sources
+        await self._update_live_forward(user_id, cfg)
+
+    async def remove_live_source_channel(self, user_id: int, chat_id: int):
+        cfg     = await self.get_live_forward_config(user_id)
+        sources = cfg.get("source_channels", [])
+        cfg["source_channels"] = [s for s in sources if s["chat_id"] != chat_id]
+        await self._update_live_forward(user_id, cfg)
+
+    async def set_live_forward_active(self, user_id: int, active: bool):
+        cfg = await self.get_live_forward_config(user_id)
+        cfg["active"] = active
+        await self._update_live_forward(user_id, cfg)
+
+    async def get_all_active_live_forward_users(self) -> list:
+        """Return list of user_ids who have live forward currently active."""
+        cursor = self.col.find({"live_forward.active": True}, {"id": 1})
+        return [doc["id"] async for doc in cursor]
+
                                          
 db = Db(Config.DATABASE_URI, Config.DATABASE_NAME)
