@@ -24,14 +24,24 @@ logger.setLevel(logging.INFO)
 FREE_MAX_CONNECTIONS    = 1
 PREMIUM_MAX_CONNECTIONS = 10
 
+# Mode labels & descriptions
+MODE_LABELS = {
+    "auto": "🔄 Auto",
+    "bot":  "🤖 Bot Mode",
+    "user": "👤 User Mode",
+}
+MODE_DESC = {
+    "auto": "Bot checks automatically. Uses Bot if it's in source channel, otherwise falls back to Userbot.",
+    "bot":  "Bot Mode only. Bot must be a member/admin of the source channel.",
+    "user": "User Mode only. Uses your Userbot session. Bot does NOT need to be in the channel.",
+}
+
 # ══════════════════════════════════════════════════════════════
 #   RUNTIME STATE
-#   _userbot_tasks  : { "uid:idx" -> asyncio.Task }
-#   _userbot_clients: { "uid:idx" -> pyrogram.Client }
 # ══════════════════════════════════════════════════════════════
 
-_userbot_tasks:   dict[str, asyncio.Task]  = {}
-_userbot_clients: dict[str, Client]        = {}
+_userbot_tasks:   dict[str, asyncio.Task] = {}
+_userbot_clients: dict[str, Client]       = {}
 
 
 def _task_key(user_id: int, idx: int) -> str:
@@ -51,7 +61,6 @@ async def _max_connections(user_id: int) -> int:
 
 
 async def _bot_in_channel(bot: Client, chat_id: int) -> bool:
-    """Return True if the bot itself is a member/admin of the channel."""
     try:
         member = await bot.get_chat_member(chat_id, "me")
         return member is not None
@@ -59,8 +68,16 @@ async def _bot_in_channel(bot: Client, chat_id: int) -> bool:
         return False
 
 
+def _running_mode(user_id: int, idx: int) -> str:
+    """Return the actual running mode label for display."""
+    key = _task_key(user_id, idx)
+    if key in _userbot_tasks:
+        return "👤 User Mode (running)"
+    return "🤖 Bot Mode (running)"
+
+
 # ══════════════════════════════════════════════════════════════
-#   PANEL TEXT
+#   PANEL TEXT — main list
 # ══════════════════════════════════════════════════════════════
 
 async def live_panel_text(user_id: int) -> str:
@@ -76,13 +93,14 @@ async def live_panel_text(user_id: int) -> str:
     if conns:
         lines.append("─────────────────────────")
         for c in conns:
-            idx  = c["index"]
-            src  = c.get("source_title")  or "❌ Not Set"
-            dst  = c.get("dest_title")    or "❌ Not Set"
-            sts  = "🟢" if c.get("active") else "🔴"
-            mode = "👤 Userbot" if _task_key(user_id, idx) in _userbot_tasks else "🤖 Bot"
+            idx   = c["index"]
+            src   = c.get("source_title") or "❌ Not Set"
+            dst   = c.get("dest_title")   or "❌ Not Set"
+            sts   = "🟢" if c.get("active") else "🔴"
+            mode  = MODE_LABELS.get(c.get("mode", "auto"), "🔄 Auto")
+            run   = f" → {_running_mode(user_id, idx)}" if c.get("active") else ""
             lines.append(
-                f"\n<b>#{idx+1}</b> {sts} <i>({mode})</i>\n"
+                f"\n<b>#{idx+1}</b> {sts}  <i>{mode}{run}</i>\n"
                 f"  📤 <b>Source:</b> {src}\n"
                 f"  📥 <b>Dest:</b>   {dst}"
             )
@@ -95,7 +113,7 @@ async def live_panel_text(user_id: int) -> str:
 
 
 # ══════════════════════════════════════════════════════════════
-#   BUTTONS
+#   BUTTONS — main panel
 # ══════════════════════════════════════════════════════════════
 
 async def live_panel_buttons(user_id: int) -> InlineKeyboardMarkup:
@@ -105,10 +123,10 @@ async def live_panel_buttons(user_id: int) -> InlineKeyboardMarkup:
     btns    = []
 
     for c in conns:
-        idx  = c["index"]
-        src  = (c.get("source_title") or "No Source")[:18]
-        dst  = (c.get("dest_title")   or "No Dest")[:18]
-        sts  = "🟢" if c.get("active") else "🔴"
+        idx = c["index"]
+        src = (c.get("source_title") or "No Source")[:16]
+        dst = (c.get("dest_title")   or "No Dest")[:16]
+        sts = "🟢" if c.get("active") else "🔴"
         btns.append([InlineKeyboardButton(
             f"{sts} #{idx+1}  {src} ➜ {dst}",
             callback_data=f"lf#conn_{idx}"
@@ -128,33 +146,70 @@ async def live_panel_buttons(user_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(btns)
 
 
-def conn_detail_buttons(idx: int, active: bool) -> InlineKeyboardMarkup:
+# ══════════════════════════════════════════════════════════════
+#   BUTTONS — connection detail panel
+# ══════════════════════════════════════════════════════════════
+
+def conn_detail_buttons(idx: int, active: bool, mode: str = "auto") -> InlineKeyboardMarkup:
     toggle_label = "⏹ STOP LIVE" if active else "▶️ START LIVE"
     toggle_cb    = f"lf#stop_{idx}" if active else f"lf#start_{idx}"
+    mode_label   = MODE_LABELS.get(mode, "🔄 Auto")
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📤 SET SOURCE CHANNEL",      callback_data=f"lf#set_src_{idx}")],
-        [InlineKeyboardButton("📥 SET DESTINATION CHANNEL", callback_data=f"lf#set_dst_{idx}")],
+        [InlineKeyboardButton("📤 SET SOURCE CHANNEL",       callback_data=f"lf#set_src_{idx}")],
+        [InlineKeyboardButton("📥 SET DESTINATION CHANNEL",  callback_data=f"lf#set_dst_{idx}")],
+        [InlineKeyboardButton(f"⚙️ MODE: {mode_label}",     callback_data=f"lf#mode_{idx}")],
         [
             InlineKeyboardButton(toggle_label, callback_data=toggle_cb),
-            InlineKeyboardButton("🗑 DELETE",  callback_data=f"lf#del_conn_{idx}"),
+            InlineKeyboardButton("🗑 DELETE", callback_data=f"lf#del_conn_{idx}"),
         ],
         [InlineKeyboardButton("⫷ BACK", callback_data="lf#panel")],
     ])
 
 
-def conn_detail_text(c: dict, idx: int, mode: str = "") -> str:
+def conn_detail_text(c: dict, idx: int) -> str:
     src    = c.get("source_title") or "❌ Not Set"
     dst    = c.get("dest_title")   or "❌ Not Set"
     status = "🟢 ACTIVE" if c.get("active") else "🔴 INACTIVE"
-    mode_line = f"\n<b>Mode:</b> {mode}" if mode else ""
+    mode   = c.get("mode", "auto")
+    m_lbl  = MODE_LABELS.get(mode, "🔄 Auto")
+    m_desc = MODE_DESC.get(mode, "")
     return (
         f"📡 <b>CONNECTION #{idx+1}</b>\n\n"
-        f"<b>STATUS :</b> {status}{mode_line}\n"
+        f"<b>STATUS :</b> {status}\n"
         f"<b>📤 SOURCE :</b> {src}\n"
-        f"<b>📥 DESTINATION :</b> {dst}\n\n"
-        f"<i>New messages from SOURCE will be copied to\n"
-        f"DESTINATION in real time (copyright safe).\n"
-        f"Works even if bot is NOT in the source channel.</i>"
+        f"<b>📥 DESTINATION :</b> {dst}\n"
+        f"<b>⚙️ MODE :</b> {m_lbl}\n"
+        f"<i>{m_desc}</i>"
+    )
+
+
+# ══════════════════════════════════════════════════════════════
+#   BUTTONS — mode selection panel
+# ══════════════════════════════════════════════════════════════
+
+def mode_select_buttons(idx: int, current_mode: str) -> InlineKeyboardMarkup:
+    def btn(mode_key, label):
+        tick = " ✅" if mode_key == current_mode else ""
+        return InlineKeyboardButton(f"{label}{tick}", callback_data=f"lf#setmode_{idx}_{mode_key}")
+
+    return InlineKeyboardMarkup([
+        [btn("auto", "🔄 Auto (Recommended)")],
+        [btn("bot",  "🤖 Bot Mode")],
+        [btn("user", "👤 User Mode")],
+        [InlineKeyboardButton("⫷ BACK", callback_data=f"lf#conn_{idx}")],
+    ])
+
+
+def mode_select_text(idx: int, current_mode: str) -> str:
+    return (
+        f"📡 <b>CONNECTION #{idx+1} — SELECT MODE</b>\n\n"
+        f"<b>🔄 Auto (Recommended)</b>\n"
+        f"  {MODE_DESC['auto']}\n\n"
+        f"<b>🤖 Bot Mode</b>\n"
+        f"  {MODE_DESC['bot']}\n\n"
+        f"<b>👤 User Mode</b>\n"
+        f"  {MODE_DESC['user']}\n\n"
+        f"<b>Current:</b> {MODE_LABELS.get(current_mode, '🔄 Auto')} ✅"
     )
 
 
@@ -164,67 +219,82 @@ def conn_detail_text(c: dict, idx: int, mode: str = "") -> str:
 
 async def _start_live_connection(bot: Client, user_id: int, idx: int) -> str:
     """
-    Start listening on source channel and copying to dest.
-    
-    Priority:
-      1. Bot is in source channel → use bot's on_message (already handled
-         by live_forward_bot_listener below). Return mode "🤖 Bot".
-      2. Bot NOT in source channel → spin up user's userbot session,
-         attach an asyncio task that polls/listens. Return mode "👤 Userbot".
-    
-    Returns a mode string for display, or raises on failure.
+    Start the connection using the mode saved in DB:
+      auto → check if bot is in channel; use bot if yes, userbot if no
+      bot  → force bot mode (on_message handler only, no task started)
+      user → force userbot mode regardless of bot membership
+
+    Returns running mode string for display.
+    Raises ValueError with user-friendly message on failure.
     """
     conn = await db.get_live_connection(user_id, idx)
     if not conn:
-        raise ValueError("Connection not found")
+        raise ValueError("Connection not found.")
 
     source_id = conn.get("source_id")
     dest_id   = conn.get("dest_id")
     if not source_id or not dest_id:
-        raise ValueError("Source or destination not set")
+        raise ValueError("Source or Destination not set.")
 
-    key = _task_key(user_id, idx)
+    mode = conn.get("mode", "auto")
+    key  = _task_key(user_id, idx)
 
-    # Stop any existing task for this connection first
+    # Stop any existing task first
     await _stop_live_connection(user_id, idx)
 
-    # ── Check if bot is already in source channel ──────────────
-    if await _bot_in_channel(bot, source_id):
-        # Bot can see messages via on_message handler — no task needed
-        logger.info(f"[LiveForward] #{idx} user={user_id}: Bot mode (bot is in source)")
-        return "🤖 Bot (already in channel)"
+    # ── BOT MODE ─────────────────────────────────────────────
+    if mode == "bot":
+        if not await _bot_in_channel(bot, source_id):
+            raise ValueError(
+                "🤖 <b>Bot Mode requires the bot to be a member/admin of the source channel.</b>\n\n"
+                "Either add the bot to the source channel, or switch to 👤 User Mode or 🔄 Auto."
+            )
+        logger.info(f"[LiveForward] #{idx} user={user_id}: Bot Mode (forced)")
+        return "🤖 Bot Mode"
 
-    # ── Bot NOT in channel — use userbot ───────────────────────
+    # ── USER MODE ─────────────────────────────────────────────
+    if mode == "user":
+        return await _launch_userbot(bot, user_id, idx, source_id, dest_id, forced=True)
+
+    # ── AUTO MODE ─────────────────────────────────────────────
+    if await _bot_in_channel(bot, source_id):
+        logger.info(f"[LiveForward] #{idx} user={user_id}: Auto → Bot Mode")
+        return "🤖 Bot Mode (auto)"
+    return await _launch_userbot(bot, user_id, idx, source_id, dest_id, forced=False)
+
+
+async def _launch_userbot(
+    bot: Client, user_id: int, idx: int,
+    source_id: int, dest_id: int, forced: bool
+) -> str:
+    """Start a userbot listener task for this connection."""
     userbot_data = await db.get_userbot(user_id)
     if not userbot_data or not userbot_data.get("session"):
+        hint = "switch Mode to 🤖 Bot Mode (and add bot to channel)" if not forced else ""
         raise ValueError(
-            "Bot is not in the source channel and no userbot session found.\n"
-            "Please add a userbot via Settings → Bots → Add Userbot."
+            "👤 <b>No Userbot session found.</b>\n\n"
+            "Add a userbot via <b>Settings → Bots → Add Userbot</b>."
+            + (f"\n\nOr {hint}." if hint else "")
         )
 
-    session_string = userbot_data["session"]
-
-    # Build and start the userbot client
-    userbot = await get_client(session_string, is_bot=False)
+    key = _task_key(user_id, idx)
+    userbot = await get_client(userbot_data["session"], is_bot=False)
     try:
         await userbot.start()
     except Exception as e:
-        raise ValueError(f"Failed to start userbot: {e}")
+        raise ValueError(f"Failed to start Userbot session: {e}")
 
     _userbot_clients[key] = userbot
-    logger.info(f"[LiveForward] #{idx} user={user_id}: Userbot mode started")
-
-    # Spin up the listener task
     task = asyncio.create_task(
         _userbot_listener_task(bot, userbot, user_id, idx, source_id, dest_id)
     )
     _userbot_tasks[key] = task
-    logger.info(f"[LiveForward] #{idx} user={user_id}: Listener task created")
-    return "👤 Userbot (bot not in channel)"
+    label = "👤 User Mode (forced)" if forced else "👤 User Mode (auto fallback)"
+    logger.info(f"[LiveForward] #{idx} user={user_id}: {label}")
+    return label
 
 
 async def _stop_live_connection(user_id: int, idx: int):
-    """Cancel any running userbot task for this connection."""
     key = _task_key(user_id, idx)
 
     task = _userbot_tasks.pop(key, None)
@@ -247,88 +317,76 @@ async def _stop_live_connection(user_id: int, idx: int):
 
 # ══════════════════════════════════════════════════════════════
 #   USERBOT LISTENER TASK
-#   Runs as a long-lived asyncio task.
-#   Uses get_chat_history in a loop to catch new messages.
 # ══════════════════════════════════════════════════════════════
 
 async def _userbot_listener_task(
-    bot: Client,
-    userbot: Client,
-    user_id: int,
-    idx: int,
-    source_id: int,
-    dest_id: int
+    bot: Client, userbot: Client,
+    user_id: int, idx: int,
+    source_id: int, dest_id: int
 ):
-    """
-    Long-running task that watches a source channel via userbot
-    and copies new messages to dest using the main bot.
-
-    Uses offset_id tracking so it never re-sends old messages.
-    Polls every 5 seconds for new messages.
-    """
-    logger.info(f"[UBListener] Starting for user={user_id} idx={idx} src={source_id}")
-
-    # Get current latest message ID as starting offset
+    logger.info(f"[UBListener] Start user={user_id} idx={idx} src={source_id}")
     try:
         history = [m async for m in userbot.get_chat_history(source_id, limit=1)]
         last_id = history[0].id if history else 0
     except Exception as e:
-        logger.error(f"[UBListener] Failed to get initial offset: {e}")
+        logger.error(f"[UBListener] Initial offset failed: {e}")
         last_id = 0
+
+    # ✅ Pre-resolve destination peer in the userbot session so copy_message works.
+    # Without this, Telegram returns CHANNEL_INVALID because the peer is unknown.
+    try:
+        await userbot.get_chat(dest_id)
+        logger.info(f"[UBListener] Dest peer {dest_id} resolved OK")
+    except Exception as e:
+        logger.warning(f"[UBListener] Could not resolve dest peer {dest_id}: {e}")
 
     while True:
         try:
-            # Check if still active in DB (user may have stopped it)
             conn = await db.get_live_connection(user_id, idx)
             if not conn or not conn.get("active"):
-                logger.info(f"[UBListener] Connection {idx} deactivated, stopping task")
+                logger.info(f"[UBListener] Deactivated — exiting idx={idx}")
                 break
 
-            # Fetch messages newer than last_id
-            new_messages = []
+            new_msgs = []
             async for msg in userbot.get_chat_history(source_id, limit=50):
                 if msg.id <= last_id:
                     break
-                new_messages.append(msg)
+                new_msgs.append(msg)
 
-            # Process oldest-first
-            for msg in reversed(new_messages):
+            for msg in reversed(new_msgs):
                 if msg.id > last_id:
                     last_id = msg.id
                     try:
-                        await _safe_copy(bot, msg, dest_id, user_id, via_userbot=True)
+                        # ✅ Use userbot as copier — it already has the peer resolved.
+                        # The main bot cannot use raw peer IDs from another session.
+                        await _safe_copy(userbot, msg, dest_id, user_id)
                     except Exception as e:
                         logger.error(f"[UBListener] copy error: {e}")
 
-            await asyncio.sleep(5)   # poll interval
+            await asyncio.sleep(5)
 
         except asyncio.CancelledError:
-            logger.info(f"[UBListener] Task cancelled for user={user_id} idx={idx}")
+            logger.info(f"[UBListener] Cancelled idx={idx}")
             break
         except FloodWait as fw:
             logger.warning(f"[UBListener] FloodWait {fw.value}s")
             await asyncio.sleep(fw.value)
         except Exception as e:
-            logger.error(f"[UBListener] Unexpected error: {e}")
+            logger.error(f"[UBListener] Error: {e}")
             await asyncio.sleep(10)
 
-    logger.info(f"[UBListener] Exited for user={user_id} idx={idx}")
+    logger.info(f"[UBListener] Exited idx={idx}")
 
 
 # ══════════════════════════════════════════════════════════════
-#   BOT ON_MESSAGE LISTENER
-#   Only fires when the bot IS already a member of source channel.
+#   BOT on_message LISTENER (Bot Mode)
 # ══════════════════════════════════════════════════════════════
 
 @Client.on_message(filters.channel & ~filters.private)
 async def live_forward_bot_listener(bot: Client, message: Message):
-    """
-    Fires when bot itself receives a channel post (bot is member of source).
-    Handles all active connections whose source matches this chat.
-    """
+    """Fires when bot receives a channel post. Skips connections handled by userbot tasks."""
     source_chat_id = message.chat.id
-
-    active_users = await db.get_all_active_live_users()
+    active_users   = await db.get_all_active_live_users()
     if not active_users:
         return
 
@@ -342,83 +400,72 @@ async def live_forward_bot_listener(bot: Client, message: Message):
             dest = conn.get("dest_id")
             if not dest:
                 continue
-            # Skip if this connection is handled by a userbot task
+            # Skip — this connection is running in user mode via task
             if _task_key(user_id, conn["index"]) in _userbot_tasks:
                 continue
             try:
                 await _safe_copy(bot, message, dest, user_id)
             except Exception as e:
-                logger.error(
-                    f"[BotListener] user={user_id} conn={conn['index']} error: {e}"
-                )
+                logger.error(f"[BotListener] user={user_id} idx={conn['index']} error: {e}")
 
 
 # ══════════════════════════════════════════════════════════════
-#   SAFE COPY — copyright protected, works for both modes
+#   SAFE COPY
 # ══════════════════════════════════════════════════════════════
 
-async def _safe_copy(
-    bot: Client,
-    message: Message,
-    dest: int,
-    user_id: int,
-    via_userbot: bool = False
-):
+async def _safe_copy(copier: Client, message: Message, dest: int, user_id: int):
     """
-    Copy a message to destination.
-    - Uses bot.copy_message() for clean re-post (no forward tag).
-    - Handles all errors gracefully.
+    Copy a message to destination using `copier` (may be bot OR userbot).
+    When called from userbot listener, copier=userbot so peer is already known.
     """
     if getattr(message, "has_protected_content", False):
-        logger.info(f"[LiveForward] Skipping protected msg {message.id}")
         return
 
     caption = message.caption
 
-    try:
-        await bot.copy_message(
+    async def _do_copy():
+        await copier.copy_message(
             chat_id=dest,
             from_chat_id=message.chat.id,
             message_id=message.id,
             caption=caption,
             parse_mode=enums.ParseMode.HTML if caption else enums.ParseMode.DISABLED
         )
+
+    try:
+        await _do_copy()
 
     except FloodWait as fw:
-        logger.warning(f"[LiveForward] FloodWait {fw.value}s")
+        logger.warning(f"[SafeCopy] FloodWait {fw.value}s")
         await asyncio.sleep(fw.value)
-        await bot.copy_message(
-            chat_id=dest,
-            from_chat_id=message.chat.id,
-            message_id=message.id,
-            caption=caption,
-            parse_mode=enums.ParseMode.HTML if caption else enums.ParseMode.DISABLED
-        )
+        await _do_copy()
 
     except (ChatAdminRequired, ChatWriteForbidden):
-        logger.warning(f"[LiveForward] Bot lacks permission in dest {dest}")
+        logger.warning(f"[SafeCopy] No send permission in dest {dest}")
 
-    except (ChannelPrivate, PeerIdInvalid):
-        logger.warning(f"[LiveForward] Cannot access channel for user {user_id}")
+    except (ChannelPrivate, PeerIdInvalid) as e:
+        # Peer not yet in session cache — try resolving then retry once
+        logger.warning(f"[SafeCopy] Peer unknown ({e}), resolving and retrying...")
+        try:
+            await copier.get_chat(dest)
+            await copier.get_chat(message.chat.id)
+            await _do_copy()
+        except Exception as retry_err:
+            logger.error(f"[SafeCopy] Retry failed for user={user_id}: {retry_err}")
 
     except Exception as e:
-        err = str(e).lower()
-        if any(k in err for k in ("copyright", "restricted", "protected", "forward")):
-            logger.info(f"[LiveForward] Copyright skip: {e}")
+        if any(k in str(e).lower() for k in ("copyright", "restricted", "protected", "forward")):
+            logger.info(f"[SafeCopy] Copyright skip: {e}")
         else:
             raise
 
 
 # ══════════════════════════════════════════════════════════════
-#   RESTART — resume all active connections after bot restart
+#   RESTART on bot startup
 # ══════════════════════════════════════════════════════════════
 
 async def restart_live_forward_tasks(bot: Client):
-    """
-    Call this from main.py on bot startup.
-    Resumes all active live connections that need userbot tasks.
-    """
-    logger.info("[LiveForward] Restarting active live connections...")
+    logger.info("[LiveForward] Restarting active connections...")
     active_users = await db.get_all_active_live_users()
     count = 0
     for user_id in active_users:
@@ -428,8 +475,8 @@ async def restart_live_forward_tasks(bot: Client):
                 continue
             idx = conn["index"]
             try:
-                mode = await _start_live_connection(bot, user_id, idx)
-                logger.info(f"[LiveForward] Resumed user={user_id} idx={idx} mode={mode}")
+                mode_run = await _start_live_connection(bot, user_id, idx)
+                logger.info(f"[LiveForward] Resumed user={user_id} idx={idx} → {mode_run}")
                 count += 1
             except Exception as e:
                 logger.warning(f"[LiveForward] Could not resume user={user_id} idx={idx}: {e}")
@@ -437,7 +484,7 @@ async def restart_live_forward_tasks(bot: Client):
 
 
 # ══════════════════════════════════════════════════════════════
-#   CALLBACK HANDLER — settings UI
+#   CALLBACK HANDLER
 # ══════════════════════════════════════════════════════════════
 
 @Client.on_callback_query(filters.regex(r"^lf#"))
@@ -445,19 +492,19 @@ async def live_forward_cb(bot, query):
     user_id = query.from_user.id
     action  = query.data.split("#", 1)[1]
 
-    # ── No-op ──────────────────────────────────────────────
+    # ── No-op ──────────────────────────────────────────────────
     if action == "noop":
         return await query.answer()
 
-    # ── Main panel ─────────────────────────────────────────
+    # ── Main panel ─────────────────────────────────────────────
     if action == "panel":
-        await query.message.edit_text(
+        return await query.message.edit_text(
             await live_panel_text(user_id),
             reply_markup=await live_panel_buttons(user_id)
         )
 
-    # ── Add connection ──────────────────────────────────────
-    elif action == "add_conn":
+    # ── Add connection ──────────────────────────────────────────
+    if action == "add_conn":
         conns   = await db.get_live_connections(user_id)
         max_c   = await _max_connections(user_id)
         premium = await _is_premium(user_id)
@@ -468,95 +515,135 @@ async def live_forward_cb(bot, query):
                     show_alert=True
                 )
             return await query.answer("Maximum 10 connections reached.", show_alert=True)
-        idx = await db.add_live_connection(user_id)
+        idx  = await db.add_live_connection(user_id)
         conn = await db.get_live_connection(user_id, idx)
-        await query.message.edit_text(
+        return await query.message.edit_text(
             conn_detail_text(conn, idx),
-            reply_markup=conn_detail_buttons(idx, False)
+            reply_markup=conn_detail_buttons(idx, False, conn.get("mode", "auto"))
         )
 
-    # ── Open detail ─────────────────────────────────────────
-    elif action.startswith("conn_"):
+    # ── Open connection detail ──────────────────────────────────
+    if action.startswith("conn_"):
         idx  = int(action.split("_", 1)[1])
         conn = await db.get_live_connection(user_id, idx)
         if not conn:
             return await query.answer("Connection not found.", show_alert=True)
-        key  = _task_key(user_id, idx)
-        mode = "👤 Userbot" if key in _userbot_tasks else ("🤖 Bot" if conn.get("active") else "")
-        await query.message.edit_text(
-            conn_detail_text(conn, idx, mode),
-            reply_markup=conn_detail_buttons(idx, conn.get("active", False))
+        return await query.message.edit_text(
+            conn_detail_text(conn, idx),
+            reply_markup=conn_detail_buttons(idx, conn.get("active", False), conn.get("mode", "auto"))
         )
 
-    # ── Set source ──────────────────────────────────────────
-    elif action.startswith("set_src_"):
+    # ── Open mode selection panel ───────────────────────────────
+    if action.startswith("mode_"):
+        idx  = int(action.split("_", 1)[1])
+        conn = await db.get_live_connection(user_id, idx)
+        if not conn:
+            return await query.answer("Connection not found.", show_alert=True)
+        return await query.message.edit_text(
+            mode_select_text(idx, conn.get("mode", "auto")),
+            reply_markup=mode_select_buttons(idx, conn.get("mode", "auto"))
+        )
+
+    # ── Save selected mode ──────────────────────────────────────
+    if action.startswith("setmode_"):
+        # callback: lf#setmode_{idx}_{mode_key}
+        parts    = action.split("_", 2)          # ["setmode", idx, mode_key]
+        idx      = int(parts[1])
+        mode_key = parts[2]                       # "auto" | "bot" | "user"
+        if mode_key not in ("auto", "bot", "user"):
+            return await query.answer("Invalid mode.", show_alert=True)
+
+        await db.set_live_connection_mode(user_id, idx, mode_key)
+        await query.answer(f"✅ Mode set to {MODE_LABELS[mode_key]}", show_alert=True)
+
+        # If connection is currently active, restart it with new mode
+        conn = await db.get_live_connection(user_id, idx)
+        if conn and conn.get("active"):
+            try:
+                mode_run = await _start_live_connection(bot, user_id, idx)
+                await query.answer(f"✅ Mode changed — Restarted as {mode_run}", show_alert=True)
+            except ValueError as e:
+                await db.set_live_connection_active(user_id, idx, False)
+                await query.message.edit_text(
+                    f"❌ <b>Mode change failed:</b>\n{e}\n\n"
+                    f"Connection stopped. Please fix and restart.\n\n" +
+                    conn_detail_text(conn, idx),
+                    reply_markup=conn_detail_buttons(idx, False, mode_key)
+                )
+                return
+
+        conn = await db.get_live_connection(user_id, idx)
+        return await query.message.edit_text(
+            mode_select_text(idx, mode_key),
+            reply_markup=mode_select_buttons(idx, mode_key)
+        )
+
+    # ── Set source ──────────────────────────────────────────────
+    if action.startswith("set_src_"):
         idx = int(action.split("_")[-1])
         await query.message.delete()
         msg = await bot.ask(
             user_id,
             f"<b>📤 SET SOURCE CHANNEL — Connection #{idx+1}\n\n"
-            "Forward any message from the <u>source</u> channel.\n"
-            "<i>Bot does NOT need to be in the channel.</i>\n\n"
+            "Forward any message from the <u>source</u> channel.\n\n"
             "/cancel – cancel</b>"
         )
+        conn = await db.get_live_connection(user_id, idx)
         if msg.text == "/cancel":
-            conn = await db.get_live_connection(user_id, idx)
             return await msg.reply_text(
                 conn_detail_text(conn, idx),
-                reply_markup=conn_detail_buttons(idx, conn.get("active", False))
+                reply_markup=conn_detail_buttons(idx, conn.get("active", False), conn.get("mode", "auto"))
             )
         origin   = getattr(msg, "forward_origin", None)
         fwd_chat = getattr(origin, "chat", None) or getattr(origin, "sender_chat", None)
         if not origin or not fwd_chat:
-            conn = await db.get_live_connection(user_id, idx)
             return await msg.reply_text(
                 "⚠️ Please forward a message from the channel.\n\n" +
                 conn_detail_text(conn, idx),
-                reply_markup=conn_detail_buttons(idx, conn.get("active", False))
+                reply_markup=conn_detail_buttons(idx, conn.get("active", False), conn.get("mode", "auto"))
             )
         await db.set_live_connection_source(user_id, idx, fwd_chat.id, fwd_chat.title)
         conn = await db.get_live_connection(user_id, idx)
-        await msg.reply_text(
+        return await msg.reply_text(
             f"✅ <b>Source set to:</b> <code>{fwd_chat.title}</code>\n\n" +
             conn_detail_text(conn, idx),
-            reply_markup=conn_detail_buttons(idx, conn.get("active", False))
+            reply_markup=conn_detail_buttons(idx, conn.get("active", False), conn.get("mode", "auto"))
         )
 
-    # ── Set destination ─────────────────────────────────────
-    elif action.startswith("set_dst_"):
+    # ── Set destination ─────────────────────────────────────────
+    if action.startswith("set_dst_"):
         idx = int(action.split("_")[-1])
         await query.message.delete()
         msg = await bot.ask(
             user_id,
             f"<b>📥 SET DESTINATION CHANNEL — Connection #{idx+1}\n\n"
-            "Forward any message from the <u>destination</u> channel.\n"
+            "Forward any message from the <u>destination</u> channel.\n\n"
             "/cancel – cancel</b>"
         )
+        conn = await db.get_live_connection(user_id, idx)
         if msg.text == "/cancel":
-            conn = await db.get_live_connection(user_id, idx)
             return await msg.reply_text(
                 conn_detail_text(conn, idx),
-                reply_markup=conn_detail_buttons(idx, conn.get("active", False))
+                reply_markup=conn_detail_buttons(idx, conn.get("active", False), conn.get("mode", "auto"))
             )
         origin   = getattr(msg, "forward_origin", None)
         fwd_chat = getattr(origin, "chat", None) or getattr(origin, "sender_chat", None)
         if not origin or not fwd_chat:
-            conn = await db.get_live_connection(user_id, idx)
             return await msg.reply_text(
                 "⚠️ Please forward a message from the channel.\n\n" +
                 conn_detail_text(conn, idx),
-                reply_markup=conn_detail_buttons(idx, conn.get("active", False))
+                reply_markup=conn_detail_buttons(idx, conn.get("active", False), conn.get("mode", "auto"))
             )
         await db.set_live_connection_dest(user_id, idx, fwd_chat.id, fwd_chat.title)
         conn = await db.get_live_connection(user_id, idx)
-        await msg.reply_text(
+        return await msg.reply_text(
             f"✅ <b>Destination set to:</b> <code>{fwd_chat.title}</code>\n\n" +
             conn_detail_text(conn, idx),
-            reply_markup=conn_detail_buttons(idx, conn.get("active", False))
+            reply_markup=conn_detail_buttons(idx, conn.get("active", False), conn.get("mode", "auto"))
         )
 
-    # ── Start ───────────────────────────────────────────────
-    elif action.startswith("start_"):
+    # ── Start ───────────────────────────────────────────────────
+    if action.startswith("start_"):
         idx  = int(action.split("_", 1)[1])
         conn = await db.get_live_connection(user_id, idx)
         if not conn:
@@ -566,54 +653,53 @@ async def live_forward_cb(bot, query):
         if not conn.get("dest_id"):
             return await query.answer("⚠️ Set a DESTINATION channel first!", show_alert=True)
 
-        await query.answer("⏳ Starting...", show_alert=False)
         try:
-            mode = await _start_live_connection(bot, user_id, idx)
+            mode_run = await _start_live_connection(bot, user_id, idx)
         except ValueError as e:
             return await query.message.edit_text(
                 f"❌ <b>Could not start:</b>\n{e}\n\n" + conn_detail_text(conn, idx),
-                reply_markup=conn_detail_buttons(idx, False)
+                reply_markup=conn_detail_buttons(idx, False, conn.get("mode", "auto"))
             )
 
         await db.set_live_connection_active(user_id, idx, True)
         conn = await db.get_live_connection(user_id, idx)
-        await query.answer(f"✅ STARTED — {mode}", show_alert=True)
-        await query.message.edit_text(
-            conn_detail_text(conn, idx, mode),
-            reply_markup=conn_detail_buttons(idx, True)
+        await query.answer(f"✅ STARTED — {mode_run}", show_alert=True)
+        return await query.message.edit_text(
+            conn_detail_text(conn, idx),
+            reply_markup=conn_detail_buttons(idx, True, conn.get("mode", "auto"))
         )
 
-    # ── Stop ────────────────────────────────────────────────
-    elif action.startswith("stop_"):
+    # ── Stop ────────────────────────────────────────────────────
+    if action.startswith("stop_"):
         idx = int(action.split("_", 1)[1])
         await _stop_live_connection(user_id, idx)
         await db.set_live_connection_active(user_id, idx, False)
         conn = await db.get_live_connection(user_id, idx)
         await query.answer("⏹ Live Forward STOPPED.", show_alert=True)
-        await query.message.edit_text(
+        return await query.message.edit_text(
             conn_detail_text(conn, idx),
-            reply_markup=conn_detail_buttons(idx, False)
+            reply_markup=conn_detail_buttons(idx, False, conn.get("mode", "auto"))
         )
 
-    # ── Delete ──────────────────────────────────────────────
-    elif action.startswith("del_conn_"):
+    # ── Delete ──────────────────────────────────────────────────
+    if action.startswith("del_conn_"):
         idx = int(action.split("_")[-1])
         await _stop_live_connection(user_id, idx)
         await db.delete_live_connection(user_id, idx)
         await query.answer("🗑 Connection deleted.", show_alert=True)
-        await query.message.edit_text(
+        return await query.message.edit_text(
             await live_panel_text(user_id),
             reply_markup=await live_panel_buttons(user_id)
         )
 
-    # ── Premium upsell ──────────────────────────────────────
-    elif action == "buy_premium":
-        await query.message.edit_text(
+    # ── Premium upsell ──────────────────────────────────────────
+    if action == "buy_premium":
+        return await query.message.edit_text(
             "⭐ <b>UPGRADE TO PREMIUM</b>\n\n"
             "With Premium you get:\n"
             "• Up to <b>10 live forward connections</b>\n"
-            "• Each connection has its own Source ➜ Destination\n"
-            "• Works with or without bot in channel\n\n"
+            "• Each connection has its own Mode, Source & Destination\n"
+            "• 🔄 Auto / 🤖 Bot / 👤 User per connection\n\n"
             f"👤 <a href='tg://user?id={Config.BOT_OWNER}'>Contact owner to purchase</a>",
             reply_markup=InlineKeyboardMarkup([
                 [InlineKeyboardButton("👤 Contact Owner", url=f"tg://user?id={Config.BOT_OWNER}")],
@@ -642,6 +728,7 @@ async def grant_premium(bot, message):
             target,
             "⭐ <b>You have been upgraded to Premium!</b>\n"
             "You can now create up to <b>10 live forward connections</b>.\n"
+            "Each connection has its own 🔄 Auto / 🤖 Bot / 👤 User mode.\n"
             "Open /settings → 📡 Live Forward to get started."
         )
     except Exception:
