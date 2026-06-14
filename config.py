@@ -20,6 +20,7 @@ class Config:
 class temp(object): 
     lock = {}
     CANCEL = {}
+    PAUSE = {}       # user_id -> True if paused
     forwardings = 0
     BANNED_USERS = []
     IS_FRWD_CHAT = []

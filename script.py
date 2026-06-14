@@ -16,6 +16,8 @@ class  Script(object):
 ⏣ __/settings - configure your settings__
 ⏣ __ /unequify - delete duplicate media messages in chats__
 ⏣ __ /stop - stop your ongoing tasks__
+⏣ __ /pause - pause your ongoing forwarding__
+⏣ __ /resume - resume your paused forwarding__
 ⏣ __ /reset - reset your settings__</b>
 
 <b><u>💢 Features:</b></u>
