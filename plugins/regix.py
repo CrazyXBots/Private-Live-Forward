@@ -274,7 +274,9 @@ async def edit(user, msg, title, status, sts):
    if status in ["cancelled", "completed"]:
       button.append([InlineKeyboardButton('• ᴄᴏᴍᴘʟᴇᴛᴇᴅ ​•', url='https://t.me/Prime_SpoT')])
    else:
-      button.append([InlineKeyboardButton('• ᴄᴀɴᴄᴇʟ', 'terminate_frwd')])
+      is_paused = temp.PAUSE.get(user, False)
+      pause_btn = InlineKeyboardButton('▶️ ʀᴇsᴜᴍᴇ', 'resume_frwd') if is_paused else InlineKeyboardButton('⏸ ᴘᴀᴜsᴇ', 'pause_frwd')
+      button.append([pause_btn, InlineKeyboardButton('• ᴄᴀɴᴄᴇʟ', 'terminate_frwd')])
    await msg_edit(msg, text, InlineKeyboardMarkup(button))
 
 # Don't Remove Credit Tg - @VJ_Botz
@@ -282,6 +284,12 @@ async def edit(user, msg, title, status, sts):
 # Ask Doubt on telegram @KingVJ01
 
 async def is_cancelled(client, user, msg, sts):
+   # ── Pause loop: sleep here until resumed or cancelled ──
+   while temp.PAUSE.get(user) == True:
+      if temp.CANCEL.get(user) == True:
+         break   # cancel during pause exits the loop immediately
+      await asyncio.sleep(2)
+   # ── Cancel check ──
    if temp.CANCEL.get(user)==True:
       if sts.TO in temp.IS_FRWD_CHAT:
          temp.IS_FRWD_CHAT.remove(sts.TO)
@@ -430,7 +438,90 @@ async def terminate_frwding(bot, m):
     user_id = m.from_user.id 
     temp.lock[user_id] = False
     temp.CANCEL[user_id] = True 
+    temp.PAUSE[user_id] = False   # clear pause on cancel
     await m.answer("Forwarding cancelled !", show_alert=True)
+
+# Don't Remove Credit Tg - @VJ_Botz
+# Subscribe YouTube Channel For Amazing Bot https://youtube.com/@Tech_VJ
+# Ask Doubt on telegram @KingVJ01
+
+@Client.on_callback_query(filters.regex(r'^pause_frwd$'))
+async def pause_frwding(bot, m):
+    user_id = m.from_user.id
+    if not await db.is_forwad_exit(user_id):
+        return await m.answer("No active forwarding to pause.", show_alert=True)
+    temp.PAUSE[user_id] = True
+    await m.answer("⏸ Forwarding Paused!", show_alert=True)
+    # Update button to show Resume
+    try:
+        kb = m.message.reply_markup.inline_keyboard
+        new_kb = []
+        for row in kb:
+            new_row = []
+            for btn in row:
+                if btn.callback_data == "pause_frwd":
+                    new_row.append(InlineKeyboardButton('▶️ ʀᴇsᴜᴍᴇ', 'resume_frwd'))
+                else:
+                    new_row.append(btn)
+            new_kb.append(new_row)
+        await m.message.edit_reply_markup(InlineKeyboardMarkup(new_kb))
+    except Exception:
+        pass
+
+# Don't Remove Credit Tg - @VJ_Botz
+# Subscribe YouTube Channel For Amazing Bot https://youtube.com/@Tech_VJ
+# Ask Doubt on telegram @KingVJ01
+
+@Client.on_callback_query(filters.regex(r'^resume_frwd$'))
+async def resume_frwding(bot, m):
+    user_id = m.from_user.id
+    if not await db.is_forwad_exit(user_id):
+        return await m.answer("No active forwarding to resume.", show_alert=True)
+    temp.PAUSE[user_id] = False
+    await m.answer("▶️ Forwarding Resumed!", show_alert=True)
+    # Update button to show Pause
+    try:
+        kb = m.message.reply_markup.inline_keyboard
+        new_kb = []
+        for row in kb:
+            new_row = []
+            for btn in row:
+                if btn.callback_data == "resume_frwd":
+                    new_row.append(InlineKeyboardButton('⏸ ᴘᴀᴜsᴇ', 'pause_frwd'))
+                else:
+                    new_row.append(btn)
+            new_kb.append(new_row)
+        await m.message.edit_reply_markup(InlineKeyboardMarkup(new_kb))
+    except Exception:
+        pass
+
+# Don't Remove Credit Tg - @VJ_Botz
+# Subscribe YouTube Channel For Amazing Bot https://youtube.com/@Tech_VJ
+# Ask Doubt on telegram @KingVJ01
+
+@Client.on_message(filters.private & filters.command(['pause']))
+async def pause_command(client, message):
+    user_id = message.from_user.id
+    if not await db.is_forwad_exit(user_id):
+        return await message.reply('<b>No active forwarding to pause.</b>')
+    if temp.PAUSE.get(user_id):
+        return await message.reply('<b>⏸ Forwarding is already paused.\nUse /resume to continue.</b>')
+    temp.PAUSE[user_id] = True
+    await message.reply('<b>⏸ Forwarding Paused!\n\nUse /resume to continue.</b>')
+
+# Don't Remove Credit Tg - @VJ_Botz
+# Subscribe YouTube Channel For Amazing Bot https://youtube.com/@Tech_VJ
+# Ask Doubt on telegram @KingVJ01
+
+@Client.on_message(filters.private & filters.command(['resume']))
+async def resume_command(client, message):
+    user_id = message.from_user.id
+    if not await db.is_forwad_exit(user_id):
+        return await message.reply('<b>No active forwarding to resume.</b>')
+    if not temp.PAUSE.get(user_id):
+        return await message.reply('<b>▶️ Forwarding is not paused.</b>')
+    temp.PAUSE[user_id] = False
+    await message.reply('<b>▶️ Forwarding Resumed!</b>')
 
 # Don't Remove Credit Tg - @VJ_Botz
 # Subscribe YouTube Channel For Amazing Bot https://youtube.com/@Tech_VJ
