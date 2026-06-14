@@ -13,275 +13,398 @@ from pyrogram.errors import FloodWait, ChatAdminRequired, ChannelPrivate, ChatWr
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-# ═══════════════════════════════════════════════════════
-#   LIVE FORWARD — BUTTON LAYOUT
-# ═══════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════
+#   CONSTANTS
+# ══════════════════════════════════════════════════════════════
 
-def live_forward_buttons():
+FREE_MAX_CONNECTIONS    = 1    # free users can have 1 source→destination pair
+PREMIUM_MAX_CONNECTIONS = 10   # premium users can have up to 10 pairs
+
+
+# ══════════════════════════════════════════════════════════════
+#   HELPERS — premium check & connection limit
+# ══════════════════════════════════════════════════════════════
+
+async def _is_premium(user_id: int) -> bool:
+    return await db.is_premium_user(user_id)
+
+
+async def _max_connections(user_id: int) -> int:
+    return PREMIUM_MAX_CONNECTIONS if await _is_premium(user_id) else FREE_MAX_CONNECTIONS
+
+
+# ══════════════════════════════════════════════════════════════
+#   PANEL TEXT — overview of all connections
+# ══════════════════════════════════════════════════════════════
+
+async def live_panel_text(user_id: int) -> str:
+    conns   = await db.get_live_connections(user_id)
+    premium = await _is_premium(user_id)
+    max_c   = PREMIUM_MAX_CONNECTIONS if premium else FREE_MAX_CONNECTIONS
+    plan    = "⭐ PREMIUM" if premium else "🆓 FREE"
+
+    lines = [
+        f"📡 <b>LIVE FORWARD</b>  |  {plan}\n",
+        f"<b>Connections:</b> {len(conns)} / {max_c}\n",
+    ]
+    if conns:
+        lines.append("─────────────────────────")
+        for i, c in enumerate(conns, 1):
+            src  = c.get("source_title")  or "❌ Not Set"
+            dst  = c.get("dest_title")    or "❌ Not Set"
+            sts  = "🟢" if c.get("active") else "🔴"
+            lines.append(
+                f"\n<b>#{i}</b> {sts}\n"
+                f"  📤 <b>Source:</b> {src}\n"
+                f"  📥 <b>Dest:</b>   {dst}"
+            )
+    else:
+        lines.append("\n<i>No connections yet. Tap ➕ Add Connection to start.</i>")
+
+    if not premium:
+        lines.append(
+            "\n\n<i>💡 Upgrade to ⭐ Premium to add up to 10 connections!</i>"
+        )
+    return "\n".join(lines)
+
+
+# ══════════════════════════════════════════════════════════════
+#   BUTTONS — main panel
+# ══════════════════════════════════════════════════════════════
+
+async def live_panel_buttons(user_id: int) -> InlineKeyboardMarkup:
+    conns   = await db.get_live_connections(user_id)
+    max_c   = await _max_connections(user_id)
+    premium = await _is_premium(user_id)
+    btns    = []
+
+    # One row per existing connection
+    for i, c in enumerate(conns):
+        idx  = c["index"]
+        src  = (c.get("source_title") or "No Source")[:20]
+        dst  = (c.get("dest_title")   or "No Dest")[:20]
+        sts  = "🟢" if c.get("active") else "🔴"
+        btns.append([InlineKeyboardButton(
+            f"{sts} #{idx+1}  {src} ➜ {dst}",
+            callback_data=f"lf#conn_{idx}"
+        )])
+
+    # Add connection button (or premium upsell)
+    if len(conns) < max_c:
+        btns.append([InlineKeyboardButton("➕ ADD CONNECTION", callback_data="lf#add_conn")])
+    elif not premium:
+        btns.append([InlineKeyboardButton(
+            "⭐ UPGRADE TO PREMIUM — Add up to 10 Connections",
+            callback_data="lf#buy_premium"
+        )])
+    else:
+        btns.append([InlineKeyboardButton("✅ Maximum 10 Connections Reached", callback_data="lf#noop")])
+
+    btns.append([InlineKeyboardButton("⫷ BACK", callback_data="settings#main")])
+    return InlineKeyboardMarkup(btns)
+
+
+# ══════════════════════════════════════════════════════════════
+#   BUTTONS — single connection detail panel
+# ══════════════════════════════════════════════════════════════
+
+def conn_detail_buttons(idx: int, active: bool) -> InlineKeyboardMarkup:
+    toggle = "⏹ STOP LIVE" if active else "▶️ START LIVE"
+    toggle_cb = f"lf#stop_{idx}" if active else f"lf#start_{idx}"
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📥 DESTINATION CHANNEL",  callback_data="lf#set_destination")],
-        [InlineKeyboardButton("📤 SOURCE CHANNELS",      callback_data="lf#manage_sources")],
-        [InlineKeyboardButton("⚙️ FILTERS",              callback_data="lf#filters")],
-        [InlineKeyboardButton("🤖 MANAGE BOT / USERBOT", callback_data="lf#manage_bot")],
+        [InlineKeyboardButton("📤 SET SOURCE CHANNEL",      callback_data=f"lf#set_src_{idx}")],
+        [InlineKeyboardButton("📥 SET DESTINATION CHANNEL", callback_data=f"lf#set_dst_{idx}")],
         [
-            InlineKeyboardButton("▶️ START LIVE", callback_data="lf#start"),
-            InlineKeyboardButton("⏹ STOP LIVE",  callback_data="lf#stop"),
+            InlineKeyboardButton(toggle, callback_data=toggle_cb),
+            InlineKeyboardButton("🗑 DELETE",  callback_data=f"lf#del_conn_{idx}"),
         ],
-        [InlineKeyboardButton("🔄 BACK", callback_data="settings#main")],
+        [InlineKeyboardButton("⫷ BACK", callback_data="lf#panel")],
     ])
 
 
-async def live_status_text(user_id: int) -> str:
-    cfg       = await db.get_live_forward_config(user_id)
-    status    = "🟢 ACTIVE"  if cfg.get("active")           else "🔴 INACTIVE"
-    dest      = cfg.get("destination_title") or "❌ NOT SET"
-    src_count = len(cfg.get("source_channels", []))
+def conn_detail_text(c: dict, idx: int) -> str:
+    src    = c.get("source_title")  or "❌ Not Set"
+    dst    = c.get("dest_title")    or "❌ Not Set"
+    status = "🟢 ACTIVE" if c.get("active") else "🔴 INACTIVE"
     return (
-        f"📡 <b>LIVE FORWARD SETTINGS</b>\n\n"
+        f"📡 <b>CONNECTION #{idx+1}</b>\n\n"
         f"<b>STATUS :</b> {status}\n"
-        f"<b>DESTINATION :</b> {dest}\n"
-        f"<b>SOURCE CHANNELS :</b> {src_count}\n\n"
-        f"<i>NEW MESSAGES FROM ALL SOURCE CHANNELS WILL BE\n"
-        f"FORWARDED TO DESTINATION IN REAL TIME.</i>"
+        f"<b>📤 SOURCE :</b> {src}\n"
+        f"<b>📥 DESTINATION :</b> {dst}\n\n"
+        f"<i>New messages from SOURCE will be copied to\n"
+        f"DESTINATION in real time (copyright safe).</i>"
     )
 
 
-# ═══════════════════════════════════════════════════════
-#   LIVE FORWARD — SETTINGS PANEL (callback handler)
-# ═══════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════
+#   MAIN CALLBACK HANDLER
+# ══════════════════════════════════════════════════════════════
 
 @Client.on_callback_query(filters.regex(r"^lf#"))
 async def live_forward_cb(bot, query):
     user_id = query.from_user.id
     action  = query.data.split("#", 1)[1]
-    back    = [[InlineKeyboardButton("🔄 BACK", callback_data="lf#panel")]]
+    back_to_panel = [[InlineKeyboardButton("⫷ BACK", callback_data="lf#panel")]]
 
-    # ── Main panel ──────────────────────────────────────
+    # ── No-op (disabled button) ─────────────────────────────
+    if action == "noop":
+        return await query.answer()
+
+    # ── Main panel ──────────────────────────────────────────
     if action == "panel":
         await query.message.edit_text(
-            await live_status_text(user_id),
-            reply_markup=live_forward_buttons()
+            await live_panel_text(user_id),
+            reply_markup=await live_panel_buttons(user_id)
         )
 
-    # ── Set destination ──────────────────────────────────
-    elif action == "set_destination":
-        await query.message.delete()
-        msg = await bot.ask(
-            user_id,
-            "<b>📥 SET DESTINATION CHANNEL\n\n"
-            "Forward any message from your <u>destination</u> channel here.\n"
-            "/cancel – cancel</b>"
-        )
-        if msg.text == "/cancel":
-            return await msg.reply_text("❌ Cancelled.", reply_markup=InlineKeyboardMarkup(back))
-        origin   = getattr(msg, "forward_origin", None)
-        fwd_chat = getattr(origin, "chat", None) or getattr(origin, "sender_chat", None)
-        if not origin or not fwd_chat:
-            return await msg.reply_text(
-                "⚠️ Please forward a message from the destination channel.",
-                reply_markup=InlineKeyboardMarkup(back)
-            )
-        chat = fwd_chat
-        await db.set_live_forward_destination(user_id, chat.id, chat.title)
-        await msg.reply_text(
-            f"✅ <b>Destination set to:</b> <code>{chat.title}</code>",
-            reply_markup=InlineKeyboardMarkup(back)
-        )
+    # ── Add new connection ───────────────────────────────────
+    elif action == "add_conn":
+        conns  = await db.get_live_connections(user_id)
+        max_c  = await _max_connections(user_id)
+        premium = await _is_premium(user_id)
 
-    # ── Manage sources ───────────────────────────────────
-    elif action == "manage_sources":
-        cfg     = await db.get_live_forward_config(user_id)
-        sources = cfg.get("source_channels", [])
-        btns    = []
-        for src in sources:
-            title = src.get("title", str(src["chat_id"]))
-            btns.append([InlineKeyboardButton(
-                f"❌ Remove: {title}",
-                callback_data=f"lf#remove_src_{src['chat_id']}"
-            )])
-        btns.append([InlineKeyboardButton("➕ Add Source Channel", callback_data="lf#add_source")])
-        btns.append([InlineKeyboardButton("🔄 BACK", callback_data="lf#panel")])
+        if len(conns) >= max_c:
+            if not premium:
+                return await query.answer(
+                    "⭐ Upgrade to Premium to add more than 1 connection!",
+                    show_alert=True
+                )
+            return await query.answer("Maximum 10 connections reached.", show_alert=True)
+
+        idx = await db.add_live_connection(user_id)
+        c   = (await db.get_live_connections(user_id))[idx]
         await query.message.edit_text(
-            f"<b>📤 SOURCE CHANNELS</b>\n\nTotal: <code>{len(sources)}</code> channel(s)\n\n"
-            f"<i>Messages from these channels are forwarded live.</i>",
-            reply_markup=InlineKeyboardMarkup(btns)
+            conn_detail_text(c, idx),
+            reply_markup=conn_detail_buttons(idx, c.get("active", False))
         )
 
-    elif action == "add_source":
+    # ── Open connection detail ───────────────────────────────
+    elif action.startswith("conn_"):
+        idx  = int(action.split("_", 1)[1])
+        conn = await db.get_live_connection(user_id, idx)
+        if conn is None:
+            return await query.answer("Connection not found.", show_alert=True)
+        await query.message.edit_text(
+            conn_detail_text(conn, idx),
+            reply_markup=conn_detail_buttons(idx, conn.get("active", False))
+        )
+
+    # ── Set source channel ───────────────────────────────────
+    elif action.startswith("set_src_"):
+        idx = int(action.split("_")[-1])
         await query.message.delete()
         msg = await bot.ask(
             user_id,
-            "<b>📤 ADD SOURCE CHANNEL\n\n"
-            "Forward any message from the source channel you want to monitor.\n"
+            f"<b>📤 SET SOURCE CHANNEL — Connection #{idx+1}\n\n"
+            "Forward any message from the <u>source</u> channel.\n"
             "/cancel – cancel</b>"
         )
         if msg.text == "/cancel":
-            return await msg.reply_text("❌ Cancelled.", reply_markup=InlineKeyboardMarkup(back))
+            conn = await db.get_live_connection(user_id, idx)
+            return await msg.reply_text(
+                conn_detail_text(conn, idx),
+                reply_markup=conn_detail_buttons(idx, conn.get("active", False))
+            )
         origin   = getattr(msg, "forward_origin", None)
         fwd_chat = getattr(origin, "chat", None) or getattr(origin, "sender_chat", None)
         if not origin or not fwd_chat:
+            conn = await db.get_live_connection(user_id, idx)
             return await msg.reply_text(
-                "⚠️ Please forward a message from the source channel.",
-                reply_markup=InlineKeyboardMarkup(back)
+                "⚠️ Please forward a message from the channel.\n\n" +
+                conn_detail_text(conn, idx),
+                reply_markup=conn_detail_buttons(idx, conn.get("active", False))
             )
-        chat = fwd_chat
-        await db.add_live_source_channel(user_id, chat.id, chat.title)
+        await db.set_live_connection_source(user_id, idx, fwd_chat.id, fwd_chat.title)
+        conn = await db.get_live_connection(user_id, idx)
         await msg.reply_text(
-            f"✅ <b>Source channel added:</b> <code>{chat.title}</code>",
-            reply_markup=InlineKeyboardMarkup(back)
+            f"✅ <b>Source set to:</b> <code>{fwd_chat.title}</code>\n\n" +
+            conn_detail_text(conn, idx),
+            reply_markup=conn_detail_buttons(idx, conn.get("active", False))
         )
 
-    elif action.startswith("remove_src_"):
-        chat_id = int(action.replace("remove_src_", ""))
-        await db.remove_live_source_channel(user_id, chat_id)
-        await query.answer("✅ Source channel removed.", show_alert=True)
-        # Refresh source list
-        cfg     = await db.get_live_forward_config(user_id)
-        sources = cfg.get("source_channels", [])
-        btns    = []
-        for src in sources:
-            title = src.get("title", str(src["chat_id"]))
-            btns.append([InlineKeyboardButton(
-                f"❌ Remove: {title}",
-                callback_data=f"lf#remove_src_{src['chat_id']}"
-            )])
-        btns.append([InlineKeyboardButton("➕ Add Source Channel", callback_data="lf#add_source")])
-        btns.append([InlineKeyboardButton("🔄 BACK", callback_data="lf#panel")])
-        await query.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(btns))
-
-    # ── Bot management (redirect) ────────────────────────
-    elif action == "manage_bot":
-        await query.answer(
-            "Use /settings → 🤖 Bots to manage your bot/userbot.",
-            show_alert=True
+    # ── Set destination channel ──────────────────────────────
+    elif action.startswith("set_dst_"):
+        idx = int(action.split("_")[-1])
+        await query.message.delete()
+        msg = await bot.ask(
+            user_id,
+            f"<b>📥 SET DESTINATION CHANNEL — Connection #{idx+1}\n\n"
+            "Forward any message from the <u>destination</u> channel.\n"
+            "/cancel – cancel</b>"
+        )
+        if msg.text == "/cancel":
+            conn = await db.get_live_connection(user_id, idx)
+            return await msg.reply_text(
+                conn_detail_text(conn, idx),
+                reply_markup=conn_detail_buttons(idx, conn.get("active", False))
+            )
+        origin   = getattr(msg, "forward_origin", None)
+        fwd_chat = getattr(origin, "chat", None) or getattr(origin, "sender_chat", None)
+        if not origin or not fwd_chat:
+            conn = await db.get_live_connection(user_id, idx)
+            return await msg.reply_text(
+                "⚠️ Please forward a message from the channel.\n\n" +
+                conn_detail_text(conn, idx),
+                reply_markup=conn_detail_buttons(idx, conn.get("active", False))
+            )
+        await db.set_live_connection_dest(user_id, idx, fwd_chat.id, fwd_chat.title)
+        conn = await db.get_live_connection(user_id, idx)
+        await msg.reply_text(
+            f"✅ <b>Destination set to:</b> <code>{fwd_chat.title}</code>\n\n" +
+            conn_detail_text(conn, idx),
+            reply_markup=conn_detail_buttons(idx, conn.get("active", False))
         )
 
-    # ── Filters (redirect) ───────────────────────────────
-    elif action == "filters":
-        await query.answer(
-            "Live forward uses the same filters as your main settings → Filters.",
-            show_alert=True
-        )
-
-    # ── Start live ───────────────────────────────────────
-    elif action == "start":
-        cfg  = await db.get_live_forward_config(user_id)
-        dest = cfg.get("destination_id")
-        srcs = cfg.get("source_channels", [])
-        if not dest:
-            return await query.answer("⚠️ Set a destination channel first!", show_alert=True)
-        if not srcs:
-            return await query.answer("⚠️ Add at least one source channel first!", show_alert=True)
-        await db.set_live_forward_active(user_id, True)
+    # ── Start connection ─────────────────────────────────────
+    elif action.startswith("start_"):
+        idx  = int(action.split("_", 1)[1])
+        conn = await db.get_live_connection(user_id, idx)
+        if not conn:
+            return await query.answer("Connection not found.", show_alert=True)
+        if not conn.get("source_id"):
+            return await query.answer("⚠️ Set a SOURCE channel first!", show_alert=True)
+        if not conn.get("dest_id"):
+            return await query.answer("⚠️ Set a DESTINATION channel first!", show_alert=True)
+        await db.set_live_connection_active(user_id, idx, True)
+        conn = await db.get_live_connection(user_id, idx)
         await query.answer("✅ Live Forward STARTED!", show_alert=True)
         await query.message.edit_text(
-            await live_status_text(user_id),
-            reply_markup=live_forward_buttons()
+            conn_detail_text(conn, idx),
+            reply_markup=conn_detail_buttons(idx, True)
         )
 
-    # ── Stop live ────────────────────────────────────────
-    elif action == "stop":
-        await db.set_live_forward_active(user_id, False)
+    # ── Stop connection ──────────────────────────────────────
+    elif action.startswith("stop_"):
+        idx  = int(action.split("_", 1)[1])
+        await db.set_live_connection_active(user_id, idx, False)
+        conn = await db.get_live_connection(user_id, idx)
         await query.answer("⏹ Live Forward STOPPED.", show_alert=True)
         await query.message.edit_text(
-            await live_status_text(user_id),
-            reply_markup=live_forward_buttons()
+            conn_detail_text(conn, idx),
+            reply_markup=conn_detail_buttons(idx, False)
+        )
+
+    # ── Delete connection ────────────────────────────────────
+    elif action.startswith("del_conn_"):
+        idx = int(action.split("_")[-1])
+        await db.delete_live_connection(user_id, idx)
+        await query.answer("🗑 Connection deleted.", show_alert=True)
+        await query.message.edit_text(
+            await live_panel_text(user_id),
+            reply_markup=await live_panel_buttons(user_id)
+        )
+
+    # ── Buy premium upsell ───────────────────────────────────
+    elif action == "buy_premium":
+        await query.message.edit_text(
+            "⭐ <b>UPGRADE TO PREMIUM</b>\n\n"
+            "With Premium you get:\n"
+            "• Up to <b>10 live forward connections</b>\n"
+            "• Each connection has its own Source ➜ Destination\n"
+            "• All connections run simultaneously\n\n"
+            "Contact the bot owner to purchase premium:\n"
+            f"👤 <a href='tg://user?id={Config.BOT_OWNER}'>Click here to contact</a>",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("👤 Contact Owner", url=f"tg://user?id={Config.BOT_OWNER}")],
+                [InlineKeyboardButton("⫷ BACK", callback_data="lf#panel")]
+            ]),
+            disable_web_page_preview=True
         )
 
 
-# ═══════════════════════════════════════════════════════
-#   LIVE FORWARD — REAL-TIME MESSAGE LISTENER
+# ══════════════════════════════════════════════════════════════
+#   ADMIN: Grant / Revoke premium  (/grantpremium /revokepremium)
+# ══════════════════════════════════════════════════════════════
+
+@Client.on_message(filters.command("grantpremium") & filters.user(Config.BOT_OWNER))
+async def grant_premium(bot, message):
+    if len(message.command) < 2:
+        return await message.reply_text("<b>Usage:</b> /grantpremium &lt;user_id&gt;")
+    try:
+        target = int(message.command[1])
+    except ValueError:
+        return await message.reply_text("⚠️ Invalid user ID.")
+    await db.set_premium(target, True)
+    await message.reply_text(f"✅ Premium granted to <code>{target}</code>")
+    try:
+        await bot.send_message(
+            target,
+            "⭐ <b>Congratulations!</b>\nYou have been upgraded to <b>Premium</b>!\n"
+            "You can now create up to <b>10 live forward connections</b>.\n"
+            "Open /settings → 📡 Live Forward to get started."
+        )
+    except Exception:
+        pass
+
+
+@Client.on_message(filters.command("revokepremium") & filters.user(Config.BOT_OWNER))
+async def revoke_premium(bot, message):
+    if len(message.command) < 2:
+        return await message.reply_text("<b>Usage:</b> /revokepremium &lt;user_id&gt;")
+    try:
+        target = int(message.command[1])
+    except ValueError:
+        return await message.reply_text("⚠️ Invalid user ID.")
+    await db.set_premium(target, False)
+    await message.reply_text(f"✅ Premium revoked from <code>{target}</code>")
+
+
+# ══════════════════════════════════════════════════════════════
+#   LIVE MESSAGE LISTENER
 #   Fires on every channel post the bot can see.
-#   Uses copy_message() for copyright protection.
-# ═══════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════
 
 @Client.on_message(filters.channel & ~filters.private)
 async def live_forward_listener(bot: Client, message: Message):
     """
     COPYRIGHT PROTECTION STRATEGY
     ──────────────────────────────
-    • copy_message()  →  re-sends content as a FRESH post with NO
-      "Forwarded from …" tag.  This breaks the copyright chain that
-      Telegram enforces on restricted channels.
-    • has_protected_content messages are silently skipped so the bot
-      never crashes on "forward restricted" content.
+    • copy_message() re-sends content as a FRESH post with NO
+      "Forwarded from …" tag — breaks the Telegram copyright chain.
+    • has_protected_content messages are silently skipped.
     • FloodWait is caught and retried automatically.
-    • All other copyright/restricted errors are logged and skipped.
+    • All copyright/restricted errors are logged and skipped.
     """
     source_chat_id = message.chat.id
 
-    # Fetch all users with live forward currently active
-    active_users = await db.get_all_active_live_forward_users()
+    active_users = await db.get_all_active_live_users()
     if not active_users:
         return
 
     for user_id in active_users:
-        cfg     = await db.get_live_forward_config(user_id)
-        sources = cfg.get("source_channels", [])
-        dest    = cfg.get("destination_id")
+        conns = await db.get_live_connections(user_id)
+        for conn in conns:
+            if not conn.get("active"):
+                continue
+            if conn.get("source_id") != source_chat_id:
+                continue
+            dest = conn.get("dest_id")
+            if not dest:
+                continue
+            try:
+                await _safe_copy(bot, message, dest, user_id)
+            except Exception as e:
+                logger.error(f"[LiveForward] user={user_id} conn={conn['index']} error: {e}")
 
-        # Only process if this message is from one of the user's sources
-        if source_chat_id not in [s["chat_id"] for s in sources]:
-            continue
-        if not dest:
-            continue
 
-        try:
-            await _safe_copy(bot, message, dest, user_id, cfg)
-        except Exception as e:
-            logger.error(f"[LiveForward] user={user_id} error: {e}")
+async def _safe_copy(bot: Client, message: Message, dest: int, user_id: int):
+    """Copy message to destination — copyright safe."""
 
-
-async def _safe_copy(bot: Client, message: Message, dest: int,
-                     user_id: int, cfg: dict):
-    """Copy a message to destination with full copyright & error protection."""
-
-    # ── Skip protected/restricted content ───────────────
     if getattr(message, "has_protected_content", False):
         logger.info(f"[LiveForward] Skipping protected msg from {message.chat.id}")
         return
 
-    # ── Respect user's message type filters ─────────────
-    user_filters = cfg.get("filters", {})
-    msg_type = _msg_type(message)
-    if msg_type and not user_filters.get(msg_type, True):
-        return
-
-    # ── Build caption ────────────────────────────────────
-    custom_caption = cfg.get("caption")
-    if custom_caption:
-        try:
-            caption = custom_caption.format(
-                filename=getattr(getattr(message, "document", None), "file_name", ""),
-                size="",
-                caption=message.caption or ""
-            )
-        except Exception:
-            caption = message.caption
-    else:
-        caption = message.caption   # keep original caption, no "Forwarded from" tag
-
-    # ── Forward tag setting ──────────────────────────────
-    # forward_tag=True  → standard forward (shows origin, may trigger copyright)
-    # forward_tag=False → copy_message (no origin tag = copyright safe) [DEFAULT]
-    forward_tag = cfg.get("forward_tag", False)
+    caption = message.caption  # original caption, no "Forwarded from" tag
 
     try:
-        if forward_tag:
-            await bot.forward_messages(
-                chat_id=dest,
-                from_chat_id=message.chat.id,
-                message_ids=message.id
-            )
-        else:
-            # ✅ COPYRIGHT SAFE: no forwarding origin attached
-            await bot.copy_message(
-                chat_id=dest,
-                from_chat_id=message.chat.id,
-                message_id=message.id,
-                caption=caption,
-                parse_mode=enums.ParseMode.HTML if caption else enums.ParseMode.DISABLED
-            )
+        # ✅ COPYRIGHT SAFE — copy_message strips the forward origin
+        await bot.copy_message(
+            chat_id=dest,
+            from_chat_id=message.chat.id,
+            message_id=message.id,
+            caption=caption,
+            parse_mode=enums.ParseMode.HTML if caption else enums.ParseMode.DISABLED
+        )
 
     except FloodWait as fw:
         logger.warning(f"[LiveForward] FloodWait {fw.value}s — sleeping...")
@@ -291,35 +414,21 @@ async def _safe_copy(bot: Client, message: Message, dest: int,
             from_chat_id=message.chat.id,
             message_id=message.id,
             caption=caption,
+            parse_mode=enums.ParseMode.HTML if caption else enums.ParseMode.DISABLED
         )
 
     except (ChatAdminRequired, ChatWriteForbidden):
         logger.warning(f"[LiveForward] Bot lacks permission in dest {dest}")
 
     except ChannelPrivate:
-        logger.warning(f"[LiveForward] Cannot access source/dest for user {user_id}")
+        logger.warning(f"[LiveForward] Cannot access channel for user {user_id}")
 
     except Exception as e:
-        # Silently skip any copyright / forward-restricted Telegram errors
-        err_lower = str(e).lower()
-        if any(k in err_lower for k in ("copyright", "restricted", "protected", "forward")):
+        err = str(e).lower()
+        if any(k in err for k in ("copyright", "restricted", "protected", "forward")):
             logger.info(f"[LiveForward] Copyright/restricted skip: {e}")
         else:
-            raise   # re-raise unexpected errors so they appear in logs
-
-
-def _msg_type(message: Message):
-    """Return the filter key string for a message's content type."""
-    if message.text:      return "text"
-    if message.document:  return "document"
-    if message.video:     return "video"
-    if message.photo:     return "photo"
-    if message.audio:     return "audio"
-    if message.voice:     return "voice"
-    if message.animation: return "animation"
-    if message.sticker:   return "sticker"
-    if message.poll:      return "poll"
-    return None
+            raise
 
 # Don't Remove Credit Tg - @VJ_Botz
 # Subscribe YouTube Channel For Amazing Bot https://youtube.com/@Tech_VJ
