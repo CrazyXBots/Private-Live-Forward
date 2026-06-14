@@ -53,7 +53,7 @@ async def run(bot, message):
         return
 
     # USER SENT A POST LINK
-    if fromid.text and not fromid.forward_date:
+    if fromid.text and not fromid.forward_origin:
 
         link = fromid.text.strip().replace("?single", "")
 
@@ -77,14 +77,19 @@ async def run(bot, message):
 
 
     # USER FORWARDED A MESSAGE
-    elif fromid.forward_from_chat and fromid.forward_from_chat.type in [enums.ChatType.CHANNEL, enums.ChatType.SUPERGROUP]:
+    elif fromid.forward_origin:
+        fwd_origin  = fromid.forward_origin
+        fwd_chat    = getattr(fwd_origin, "chat", None) or getattr(fwd_origin, "sender_chat", None)
+        last_msg_id = getattr(fwd_origin, "message_id", None)
 
-        last_msg_id = fromid.forward_from_message_id
+        if not fwd_chat or fwd_chat.type not in [enums.ChatType.CHANNEL, enums.ChatType.SUPERGROUP]:
+            await message.reply_text("❌ Invalid input")
+            return
 
-        if fromid.forward_from_chat.username:
-            chat_id = fromid.forward_from_chat.username
+        if fwd_chat.username:
+            chat_id = fwd_chat.username
         else:
-            chat_id = fromid.forward_from_chat.id
+            chat_id = fwd_chat.id
 
         if not last_msg_id:
             return await message.reply_text(
@@ -99,7 +104,7 @@ async def run(bot, message):
   #  except ChannelInvalid:
         #return await fromid.reply("**Given source chat is copyrighted channel/group. you can't forward messages from there**")
     except (PrivateChat, ChannelPrivate, ChannelInvalid):
-        title = "private" if fromid.text else fromid.forward_from_chat.title
+        title = "private" if fromid.text else fwd_chat.title
     except (UsernameInvalid, UsernameNotModified):
         return await message.reply('Invalid Link specified.')
     except Exception as e:

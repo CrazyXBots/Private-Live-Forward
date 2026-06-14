@@ -99,12 +99,13 @@ async def settings_query(bot, query):
         return await chat_ids.reply_text(
                   "<b>process canceled</b>",
                   reply_markup=InlineKeyboardMarkup(buttons))
-     elif not chat_ids.forward_date:
+     elif not chat_ids.forward_origin:
         return await chat_ids.reply("**This is not a forward message**")
      else:
-        chat_id = chat_ids.forward_from_chat.id
-        title = chat_ids.forward_from_chat.title
-        username = chat_ids.forward_from_chat.username
+        fwd_chat = getattr(chat_ids.forward_origin, "chat", None) or getattr(chat_ids.forward_origin, "sender_chat", None)
+        chat_id  = fwd_chat.id
+        title    = fwd_chat.title
+        username = fwd_chat.username
         username = "@" + username if username else "private"
      chat = await db.add_channel(user_id, chat_id, title, username)
      await query.message.reply_text(
@@ -535,7 +536,6 @@ def main_buttons():
        InlineKeyboardButton('Exᴛʀᴀ Sᴇᴛᴛɪɴɢs 🧪',
                     callback_data=f'settings#extra')
        ],[
-       # ── Live Forward (new) ──
        InlineKeyboardButton('📡 Lɪᴠᴇ Fᴏʀᴡᴀʀᴅ',
                     callback_data=f'lf#panel')
        ],[

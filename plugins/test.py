@@ -53,9 +53,9 @@ class CLIENT:
      msg = await bot.ask(chat_id=user_id, text=BOT_TOKEN_TEXT)
      if msg.text=='/cancel':
         return await msg.reply('<b>process cancelled !</b>')
-     elif not msg.forward_date:
+     elif not msg.forward_origin:
        return await msg.reply_text("<b>This is not a forward message</b>")
-     elif str(msg.forward_from.id) != "93372553":
+     elif str(getattr(msg.forward_origin, "sender_user", None) and msg.forward_origin.sender_user.id or 0) != "93372553":
        return await msg.reply_text("<b>This message was not forward from bot father</b>")
      bot_token = re.findall(r'\d[0-9]{8,10}:[0-9A-Za-z_-]{35}', msg.text, re.IGNORECASE)
      bot_token = bot_token[0] if bot_token else None
