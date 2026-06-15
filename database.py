@@ -444,7 +444,9 @@ class Db:
 # ================= BOT SETTINGS (Admin Panel) ================= #
 
     DEFAULT_PLANS = [
+        {"id": "1d", "label": "1 Day",    "price": "₹10",  "days": 1},
         {"id": "1m", "label": "1 Month",  "price": "₹49",  "days": 30},
+        {"id": "2m", "label": "2 Months", "price": "₹89",  "days": 60},
         {"id": "3m", "label": "3 Months", "price": "₹129", "days": 90},
         {"id": "1y", "label": "1 Year",   "price": "₹399", "days": 365},
     ]
@@ -503,6 +505,18 @@ class Db:
                 if price is not None: p["price"] = price
                 if days is not None:  p["days"] = days
                 break
+        await self.update_bot_setting("premium_plans", plans)
+
+    async def add_premium_plan(self, plan_id: str, label: str, price: str, days: int):
+        plans = await self.get_premium_plans()
+        # Replace if id already exists, else append
+        plans = [p for p in plans if p["id"] != plan_id]
+        plans.append({"id": plan_id, "label": label, "price": price, "days": days})
+        await self.update_bot_setting("premium_plans", plans)
+
+    async def remove_premium_plan(self, plan_id: str):
+        plans = await self.get_premium_plans()
+        plans = [p for p in plans if p["id"] != plan_id]
         await self.update_bot_setting("premium_plans", plans)
 
     # ---- Premium purchase requests ----
