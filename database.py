@@ -277,6 +277,7 @@ class Db:
         conns.append({
             "index":        idx,
             "active":       False,
+            "mode":         "auto",   # "auto" | "bot" | "user"
             "source_id":    None,
             "source_title": None,
             "dest_id":      None,
@@ -288,6 +289,15 @@ class Db:
             upsert=True
         )
         return idx
+
+    async def set_live_connection_mode(self, user_id: int, idx: int, mode: str):
+        """Set mode for a connection: 'auto', 'bot', or 'user'."""
+        conns = await self.get_live_connections(user_id)
+        for c in conns:
+            if c["index"] == idx:
+                c["mode"] = mode
+                break
+        await self._save_live_connections(user_id, conns)
 
     async def _save_live_connections(self, user_id: int, conns: list):
         await self.col.update_one(
@@ -331,11 +341,13 @@ class Db:
 
     async def get_all_active_live_users(self) -> list:
         """Return user_ids who have at least one active live-forward connection."""
+        # Use $elemMatch with explicit True boolean — avoids type mismatch issues
         cursor = self.col.find(
             {"live_connections": {"$elemMatch": {"active": True}}},
-            {"id": 1}
+            {"id": 1, "_id": 0}
         )
-        return [doc["id"] async for doc in cursor]
+        users = [doc["id"] async for doc in cursor]
+        return users
 
 # ================================================ #
 
