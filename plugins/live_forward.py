@@ -12,7 +12,6 @@ from pyrogram.errors import (
     FloodWait, ChatAdminRequired, ChannelPrivate,
     ChatWriteForbidden, UserNotParticipant, PeerIdInvalid
 )
-from plugins.test import get_client
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -277,8 +276,20 @@ async def _launch_userbot(
             + (f"\n\nOr {hint}." if hint else "")
         )
 
-    key = _task_key(user_id, idx)
-    userbot = await get_client(userbot_data["session"], is_bot=False)
+    key     = _task_key(user_id, idx)
+    session = userbot_data["session"]
+
+    # ✅ Use unique name per user+connection to avoid session file conflicts
+    # when multiple users have userbot live forward active simultaneously.
+    client_name = f"LF_{user_id}_{idx}"
+    userbot = Client(
+        client_name,
+        api_id=Config.API_ID,
+        api_hash=Config.API_HASH,
+        session_string=session,
+        no_updates=False,
+    )
+
     try:
         await userbot.start()
     except Exception as e:
@@ -290,7 +301,7 @@ async def _launch_userbot(
     )
     _userbot_tasks[key] = task
     label = "👤 User Mode (forced)" if forced else "👤 User Mode (auto fallback)"
-    logger.info(f"[LiveForward] #{idx} user={user_id}: {label}")
+    logger.info(f"[LiveForward] #{idx} user={user_id}: {label} started")
     return label
 
 
@@ -500,22 +511,56 @@ async def _safe_copy(copier: Client, message: Message, dest: int, user_id: int):
 # ══════════════════════════════════════════════════════════════
 
 async def restart_live_forward_tasks(bot: Client):
-    logger.info("[LiveForward] Restarting active connections...")
-    active_users = await db.get_all_active_live_users()
+    """
+    Called from main.py on bot startup.
+    Resumes all connections that were active before restart.
+    If a connection fails to resume (e.g. invalid session, missing source),
+    it is marked inactive in DB so it doesn't silently fail on every poll.
+    """
+    logger.info("[LiveForward] Restarting active connections on startup...")
+    try:
+        active_users = await db.get_all_active_live_users()
+    except Exception as e:
+        logger.error(f"[LiveForward] Failed to fetch active users from DB: {e}")
+        return
+
+    if not active_users:
+        logger.info("[LiveForward] No active live connections found.")
+        return
+
     count = 0
+    failed = 0
     for user_id in active_users:
-        conns = await db.get_live_connections(user_id)
+        try:
+            conns = await db.get_live_connections(user_id)
+        except Exception as e:
+            logger.error(f"[LiveForward] DB error for user={user_id}: {e}")
+            continue
+
         for conn in conns:
             if not conn.get("active"):
                 continue
             idx = conn["index"]
             try:
                 mode_run = await _start_live_connection(bot, user_id, idx)
-                logger.info(f"[LiveForward] Resumed user={user_id} idx={idx} → {mode_run}")
+                logger.info(f"[LiveForward] ✅ Resumed user={user_id} idx={idx} → {mode_run}")
                 count += 1
             except Exception as e:
-                logger.warning(f"[LiveForward] Could not resume user={user_id} idx={idx}: {e}")
-    logger.info(f"[LiveForward] {count} connection(s) resumed.")
+                # Mark this connection inactive so it doesn't fail on every
+                # poll cycle — user needs to manually restart it after fixing config.
+                logger.warning(
+                    f"[LiveForward] ❌ Could not resume user={user_id} idx={idx}: {e}\n"
+                    f"  → Marking inactive until user restarts manually."
+                )
+                try:
+                    await db.set_live_connection_active(user_id, idx, False)
+                except Exception:
+                    pass
+                failed += 1
+
+    logger.info(
+        f"[LiveForward] Startup complete — {count} resumed, {failed} failed (marked inactive)."
+    )
 
 
 # ══════════════════════════════════════════════════════════════
