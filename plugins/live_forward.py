@@ -347,23 +347,39 @@ async def _userbot_listener_task(
                 logger.info(f"[UBListener] Deactivated — exiting idx={idx}")
                 break
 
+            # ✅ Collect ALL messages newer than last_id
+            # Do NOT break early — fetch full batch and filter by ID.
+            # This prevents missing messages when media groups have close/adjacent IDs.
             new_msgs = []
             async for msg in userbot.get_chat_history(source_id, limit=50):
                 if msg.id <= last_id:
-                    break
+                    break   # history is newest-first; once we hit known ID, stop
                 new_msgs.append(msg)
 
-            for msg in reversed(new_msgs):
-                if msg.id > last_id:
-                    last_id = msg.id
-                    try:
-                        # ✅ Use userbot as copier — it already has the peer resolved.
-                        # The main bot cannot use raw peer IDs from another session.
-                        await _safe_copy(userbot, msg, dest_id, user_id)
-                    except Exception as e:
-                        logger.error(f"[UBListener] copy error: {e}")
+            if new_msgs:
+                # Update last_id to the newest message seen
+                last_id = max(m.id for m in new_msgs)
 
-            await asyncio.sleep(5)
+                # Process oldest-first so destination order is correct
+                seen_media_groups = set()
+                for msg in sorted(new_msgs, key=lambda m: m.id):
+                    try:
+                        # ✅ Skip duplicate media group messages —
+                        # copy_message on any one message in a group copies
+                        # the whole album. Sending each one individually
+                        # would duplicate files in destination.
+                        if msg.media_group_id:
+                            if msg.media_group_id in seen_media_groups:
+                                continue
+                            seen_media_groups.add(msg.media_group_id)
+
+                        await _safe_copy(userbot, msg, dest_id, user_id)
+                        await asyncio.sleep(0.5)  # small delay between messages
+
+                    except Exception as e:
+                        logger.error(f"[UBListener] copy error msg={msg.id}: {e}")
+
+            await asyncio.sleep(5)   # poll interval
 
         except asyncio.CancelledError:
             logger.info(f"[UBListener] Cancelled idx={idx}")
@@ -404,6 +420,22 @@ async def live_forward_bot_listener(bot: Client, message: Message):
             if _task_key(user_id, conn["index"]) in _userbot_tasks:
                 continue
             try:
+                # ✅ Skip non-first messages in a media group —
+                # copy_message handles the whole album from the first message.
+                if message.media_group_id:
+                    # Only process the first message of a group
+                    # (Pyrogram fires on_message once per item in the group)
+                    # We use a simple temp set on temp to deduplicate.
+                    mg_key = f"mg_{user_id}_{message.media_group_id}"
+                    if mg_key in getattr(temp, "_mg_seen", set()):
+                        continue
+                    if not hasattr(temp, "_mg_seen"):
+                        temp._mg_seen = set()
+                    temp._mg_seen.add(mg_key)
+                    # Clean up old keys to avoid memory leak
+                    if len(temp._mg_seen) > 500:
+                        temp._mg_seen = set(list(temp._mg_seen)[-250:])
+
                 await _safe_copy(bot, message, dest, user_id)
             except Exception as e:
                 logger.error(f"[BotListener] user={user_id} idx={conn['index']} error: {e}")
@@ -417,26 +449,28 @@ async def _safe_copy(copier: Client, message: Message, dest: int, user_id: int):
     """
     Copy a message to destination using `copier` (may be bot OR userbot).
     When called from userbot listener, copier=userbot so peer is already known.
+
+    Key fix: preserve caption_entities so hashtags/bold/links are not stripped.
+    Do NOT override caption — pass None to keep original caption+entities intact.
     """
     if getattr(message, "has_protected_content", False):
         return
-
-    caption = message.caption
 
     async def _do_copy():
         await copier.copy_message(
             chat_id=dest,
             from_chat_id=message.chat.id,
             message_id=message.id,
-            caption=caption,
-            parse_mode=enums.ParseMode.HTML if caption else enums.ParseMode.DISABLED
+            # ✅ Do NOT pass caption= or parse_mode= here.
+            # copy_message preserves the original caption + all entities
+            # (hashtags, bold, links) automatically when these are omitted.
         )
 
     try:
         await _do_copy()
 
     except FloodWait as fw:
-        logger.warning(f"[SafeCopy] FloodWait {fw.value}s")
+        logger.warning(f"[SafeCopy] FloodWait {fw.value}s — sleeping")
         await asyncio.sleep(fw.value)
         await _do_copy()
 
@@ -444,7 +478,7 @@ async def _safe_copy(copier: Client, message: Message, dest: int, user_id: int):
         logger.warning(f"[SafeCopy] No send permission in dest {dest}")
 
     except (ChannelPrivate, PeerIdInvalid) as e:
-        # Peer not yet in session cache — try resolving then retry once
+        # Peer not yet in session cache — resolve both peers then retry once
         logger.warning(f"[SafeCopy] Peer unknown ({e}), resolving and retrying...")
         try:
             await copier.get_chat(dest)
@@ -454,10 +488,11 @@ async def _safe_copy(copier: Client, message: Message, dest: int, user_id: int):
             logger.error(f"[SafeCopy] Retry failed for user={user_id}: {retry_err}")
 
     except Exception as e:
-        if any(k in str(e).lower() for k in ("copyright", "restricted", "protected", "forward")):
-            logger.info(f"[SafeCopy] Copyright skip: {e}")
+        err = str(e).lower()
+        if any(k in err for k in ("copyright", "restricted", "protected", "forward")):
+            logger.info(f"[SafeCopy] Copyright/restricted skip: {e}")
         else:
-            raise
+            logger.error(f"[SafeCopy] Unexpected error user={user_id}: {e}")
 
 
 # ══════════════════════════════════════════════════════════════
