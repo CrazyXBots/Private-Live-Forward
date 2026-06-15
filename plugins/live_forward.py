@@ -572,6 +572,12 @@ async def live_forward_cb(bot, query):
     user_id = query.from_user.id
     action  = query.data.split("#", 1)[1]
 
+    if user_id != Config.BOT_OWNER and not await db.is_feature_enabled("live_forward_enabled"):
+        return await query.answer(
+            "🚫 Live Forward is currently disabled by the admin.",
+            show_alert=True
+        )
+
     # ── No-op ──────────────────────────────────────────────────
     if action == "noop":
         return await query.answer()

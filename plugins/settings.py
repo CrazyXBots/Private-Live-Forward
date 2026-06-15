@@ -559,6 +559,9 @@ def main_buttons():
        InlineKeyboardButton('📡 Lɪᴠᴇ Fᴏʀᴡᴀʀᴅ',
                     callback_data=f'lf#panel')
        ],[
+       InlineKeyboardButton('💎 Pʀᴇᴍɪᴜᴍ',
+                    callback_data=f'prem#main')
+       ],[
        InlineKeyboardButton('⫷ Bᴀᴄᴋ',
                     callback_data=f'help')
        ]]

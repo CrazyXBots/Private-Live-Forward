@@ -29,6 +29,7 @@ main_buttons = [[
     InlineKeyboardButton('👨‍💻 ʜᴇʟᴘ', callback_data='help'),
     InlineKeyboardButton('💁 ᴀʙᴏᴜᴛ', callback_data='about')
 ],[
+    InlineKeyboardButton('💎 ʙᴜʏ ᴘʀᴇᴍɪᴜᴍ', callback_data='prem#main'),
     InlineKeyboardButton('⚙ sᴇᴛᴛɪɴɢs', callback_data='settings#main')
 ]]
 
@@ -39,7 +40,23 @@ main_buttons = [[
 @Client.on_message(filters.private & filters.command(['start']))
 async def start(client, message):
     user = message.from_user
-    if not await db.is_user_exist(user.id):
+
+    # ── Maintenance mode / new user gate ─────────────────────
+    settings = await db.get_bot_settings()
+    if user.id != Config.BOT_OWNER and settings.get("maintenance_mode"):
+        return await message.reply_text(
+            "🚧 <b>Bot is currently under maintenance.</b>\n\n"
+            "Please check back later. Sorry for the inconvenience!"
+        )
+
+    is_new = not await db.is_user_exist(user.id)
+    if is_new and user.id != Config.BOT_OWNER and not settings.get("new_users_allowed", True):
+        return await message.reply_text(
+            "🚫 <b>New user registration is currently disabled.</b>\n\n"
+            "Please try again later."
+        )
+
+    if is_new:
         await db.add_user(user.id, user.first_name)
     reply_markup = InlineKeyboardMarkup(main_buttons)
     await client.send_message(

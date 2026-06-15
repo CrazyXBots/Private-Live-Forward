@@ -174,6 +174,12 @@ async def multi_task_cb(bot, query):
     user_id = query.from_user.id
     action  = query.data.split("#", 1)[1]
 
+    if user_id != Config.BOT_OWNER and not await db.is_feature_enabled("multi_forward_enabled"):
+        return await query.answer(
+            "🚫 Multi Forward is currently disabled by the admin.",
+            show_alert=True
+        )
+
     # ── Refresh main panel ─────────────────────────────────────
     if action in ("refresh", "panel"):
         return await query.message.edit_text(
