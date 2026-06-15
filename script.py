@@ -18,6 +18,8 @@ class  Script(object):
 ⏣ __ /stop - stop your ongoing tasks__
 ⏣ __ /pause - pause your ongoing forwarding__
 ⏣ __ /resume - resume your paused forwarding__
+⏣ __ /tasks - view and manage all running tasks__
+⏣ __ /stoptask &lt;task_id&gt; - cancel a specific task__
 ⏣ __ /reset - reset your settings__</b>
 
 <b><u>💢 Features:</b></u>

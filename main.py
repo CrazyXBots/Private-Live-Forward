@@ -9,7 +9,8 @@ from pyrogram.errors import RPCError
 from typing import Union, Optional, AsyncGenerator
 from logging.handlers import RotatingFileHandler
 from plugins.regix import restart_forwards
-from plugins.live_forward import restart_live_forward_tasks  # noqa: F401
+from plugins.live_forward import restart_live_forward_tasks
+from plugins.multi_forward import restart_pending_multi_tasks
 
 # Don't Remove Credit Tg - @VJ_Botz
 # Subscribe YouTube Channel For Amazing Bot https://youtube.com/@Tech_VJ
@@ -78,6 +79,7 @@ if __name__ == "__main__":
         bot_info  = await VJBot.get_me()
         await restart_forwards(VJBot)
         await restart_live_forward_tasks(VJBot)
+        await restart_pending_multi_tasks(VJBot)
         print("Bot Started.")
         asyncio.create_task(keep_alive())
         await idle()

@@ -210,6 +210,78 @@ class Db:
     async def update_forward(self, user_id, details):
         await self.nfy.update_one({'user_id': user_id}, {'$set': {'details': details}})
 
+# ================= MULTI-TASK FORWARD ================= #
+#
+#  Each user has a list of forward tasks stored in tasks[]:
+#  {
+#    "task_id":  str,   # unique e.g. "7298415492-0"
+#    "active":   bool,
+#    "msg_id":   int,   # progress message ID in user chat
+#    "chat_id":  int,   # source channel
+#    "toid":     int,   # destination channel
+#    "skip":     int,
+#    "limit":    int,
+#    "fetched":  int,
+#    "offset":   int,
+#    "deleted":  int,
+#    "total":    int,
+#    "duplicate":int,
+#    "filtered": int,
+#    "start_time": float,
+#    "forward_id": str,
+#  }
+# ====================================================== #
+
+    async def get_all_tasks(self, user_id: int) -> list:
+        user = await self.col.find_one({"id": int(user_id)})
+        if not user:
+            return []
+        return user.get("fwd_tasks", [])
+
+    async def get_task(self, user_id: int, task_id: str) -> dict | None:
+        tasks = await self.get_all_tasks(user_id)
+        for t in tasks:
+            if t.get("task_id") == task_id:
+                return t
+        return None
+
+    async def _save_tasks(self, user_id: int, tasks: list):
+        await self.col.update_one(
+            {"id": int(user_id)},
+            {"$set": {"fwd_tasks": tasks}},
+            upsert=True
+        )
+
+    async def add_task(self, user_id: int, task_data: dict):
+        tasks = await self.get_all_tasks(user_id)
+        # Remove old entry if exists (restart case)
+        tasks = [t for t in tasks if t.get("task_id") != task_data["task_id"]]
+        tasks.append(task_data)
+        await self._save_tasks(user_id, tasks)
+
+    async def update_task(self, user_id: int, task_id: str, details: dict):
+        tasks = await self.get_all_tasks(user_id)
+        for t in tasks:
+            if t.get("task_id") == task_id:
+                t.update(details)
+                break
+        await self._save_tasks(user_id, tasks)
+
+    async def remove_task(self, user_id: int, task_id: str):
+        tasks = await self.get_all_tasks(user_id)
+        tasks = [t for t in tasks if t.get("task_id") != task_id]
+        await self._save_tasks(user_id, tasks)
+
+    async def remove_all_tasks(self, user_id: int):
+        await self._save_tasks(user_id, [])
+
+    async def get_all_active_task_users(self) -> list:
+        cursor = self.col.find(
+            {"fwd_tasks": {"$elemMatch": {"active": True}}},
+            {"id": 1, "_id": 0}
+        )
+        return [doc["id"] async for doc in cursor]
+
 # ================= SPEED CONTROL ================= #
 
     async def set_speed(self, user_id: int, speed: int):
