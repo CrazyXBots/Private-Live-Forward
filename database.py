@@ -1,3 +1,4 @@
+import time
 import motor.motor_asyncio
 from config import Config
 
@@ -10,7 +11,9 @@ class Db:
         self.userbot = self.db.userbot 
         self.col = self.db.users
         self.nfy = self.db.notify
-        self.chl = self.db.channels 
+        self.chl = self.db.channels
+        self.settings = self.db.settings
+        self.prem_req = self.db.premium_requests
 
     def new_user(self, id, name):
         return dict(
@@ -299,10 +302,11 @@ class Db:
 
 # ================= PREMIUM ================= #
 
-    async def set_premium(self, user_id: int, status: bool):
+    async def set_premium(self, user_id: int, status: bool, expiry: float = None):
+        update = {"is_premium": status, "premium_expiry": expiry}
         await self.col.update_one(
             {"id": int(user_id)},
-            {"$set": {"is_premium": status}},
+            {"$set": update},
             upsert=True
         )
 
@@ -310,7 +314,23 @@ class Db:
         user = await self.col.find_one({"id": int(user_id)})
         if not user:
             return False
-        return user.get("is_premium", False)
+        if not user.get("is_premium", False):
+            return False
+        expiry = user.get("premium_expiry")
+        if expiry is not None and time.time() > expiry:
+            await self.set_premium(user_id, False, None)
+            return False
+        return True
+
+    async def get_premium_expiry(self, user_id: int):
+        user = await self.col.find_one({"id": int(user_id)})
+        if not user:
+            return None
+        return user.get("premium_expiry")
+
+    async def get_all_premium_users(self):
+        cursor = self.col.find({"is_premium": True})
+        return [u async for u in cursor]
 
 # ================= LIVE FORWARD (multi-connection) ================= #
 #
@@ -420,6 +440,98 @@ class Db:
         )
         users = [doc["id"] async for doc in cursor]
         return users
+
+# ================= BOT SETTINGS (Admin Panel) ================= #
+
+    DEFAULT_PLANS = [
+        {"id": "1m", "label": "1 Month",  "price": "₹49",  "days": 30},
+        {"id": "3m", "label": "3 Months", "price": "₹129", "days": 90},
+        {"id": "1y", "label": "1 Year",   "price": "₹399", "days": 365},
+    ]
+
+    DEFAULT_SETTINGS = {
+        "_id": "global",
+        "maintenance_mode": False,
+        "new_users_allowed": True,
+        "multi_forward_enabled": True,
+        "live_forward_enabled": True,
+        "broadcast_enabled": True,
+        "premium_plans": DEFAULT_PLANS,
+        "payment_info": (
+            "💳 <b>Payment Methods</b>\n\n"
+            "UPI: <code>yourupi@upi</code>\n"
+            "Or contact admin for other methods.\n\n"
+            "After payment, tap '✅ I've Paid' and send your "
+            "payment screenshot."
+        ),
+        "admin_contact": "@KingVJ01",
+    }
+
+    async def get_bot_settings(self) -> dict:
+        doc = await self.settings.find_one({"_id": "global"})
+        if not doc:
+            doc = self.DEFAULT_SETTINGS.copy()
+            await self.settings.insert_one(doc)
+            return doc
+        # backfill any missing keys with defaults (non-destructive)
+        merged = {**self.DEFAULT_SETTINGS, **doc}
+        return merged
+
+    async def update_bot_setting(self, key: str, value):
+        await self.settings.update_one(
+            {"_id": "global"},
+            {"$set": {key: value}},
+            upsert=True
+        )
+
+    async def is_feature_enabled(self, key: str) -> bool:
+        settings = await self.get_bot_settings()
+        return settings.get(key, True)
+
+    # ---- Premium plans ----
+
+    async def get_premium_plans(self) -> list:
+        settings = await self.get_bot_settings()
+        return settings.get("premium_plans", self.DEFAULT_PLANS)
+
+    async def update_premium_plan(self, plan_id: str, label: str = None,
+                                   price: str = None, days: int = None):
+        plans = await self.get_premium_plans()
+        for p in plans:
+            if p["id"] == plan_id:
+                if label is not None: p["label"] = label
+                if price is not None: p["price"] = price
+                if days is not None:  p["days"] = days
+                break
+        await self.update_bot_setting("premium_plans", plans)
+
+    # ---- Premium purchase requests ----
+
+    async def add_premium_request(self, user_id: int, plan_id: str, message_id: int = None):
+        req = {
+            "user_id": int(user_id),
+            "plan_id": plan_id,
+            "message_id": message_id,
+            "status": "pending",
+            "created_at": time.time(),
+        }
+        result = await self.prem_req.insert_one(req)
+        return str(result.inserted_id)
+
+    async def get_premium_request(self, req_id: str):
+        from bson import ObjectId
+        return await self.prem_req.find_one({"_id": ObjectId(req_id)})
+
+    async def set_premium_request_status(self, req_id: str, status: str):
+        from bson import ObjectId
+        await self.prem_req.update_one(
+            {"_id": ObjectId(req_id)},
+            {"$set": {"status": status}}
+        )
+
+    async def get_pending_premium_requests(self):
+        cursor = self.prem_req.find({"status": "pending"})
+        return [r async for r in cursor]
 
 # ================================================ #
 
