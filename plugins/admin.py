@@ -18,6 +18,27 @@ from .premium import fmt_expiry
 
 
 # ──────────────────────────────────────────────────────────────
+#   DURATION PARSER  (e.g. "1d" -> 1, "2m" -> 60, "1y" -> 365, "30" -> 30)
+# ──────────────────────────────────────────────────────────────
+
+def parse_duration_to_days(duration: str) -> int:
+    duration = duration.strip().lower()
+    if duration in ("0", ""):
+        return 0
+    unit = duration[-1]
+    if unit in ("d", "m", "y"):
+        value = int(duration[:-1])
+        if unit == "d":
+            return value
+        if unit == "m":
+            return value * 30
+        if unit == "y":
+            return value * 365
+    # Plain number -> treat as days
+    return int(duration)
+
+
+# ──────────────────────────────────────────────────────────────
 #   MAIN PANEL
 # ──────────────────────────────────────────────────────────────
 
@@ -178,6 +199,10 @@ async def edit_plans_buttons():
             f"{p['label']} ({p['price']}, {p['days']}d)",
             callback_data=f"admin#editplan_{p['id']}"
         )])
+    buttons.append([
+        InlineKeyboardButton("➕ Add Plan", callback_data="admin#addplan"),
+        InlineKeyboardButton("🗑 Remove Plan", callback_data="admin#removeplan"),
+    ])
     buttons.append([InlineKeyboardButton("« Back", callback_data="admin#premium")])
     return InlineKeyboardMarkup(buttons)
 
@@ -365,6 +390,54 @@ async def admin_callback(bot, query):
             reply_markup=await edit_plans_buttons()
         )
 
+    if action == "addplan":
+        await query.answer()
+        ask = await bot.ask(
+            msg.chat.id,
+            "➕ <b>Add a new plan</b>\n\n"
+            "Send as:\n<code>id | label | price | duration</code>\n\n"
+            "Duration can be in days, months, or years — e.g.\n"
+            "<code>1d</code> = 1 day, <code>2m</code> = 2 months, <code>1y</code> = 1 year\n\n"
+            "Example:\n<code>6m | 6 Months | ₹199 | 6m</code>\n\n"
+            "/cancel to abort."
+        )
+        if ask.text and ask.text.strip().lower() == "/cancel":
+            return await ask.reply_text("❌ Cancelled.", reply_markup=await edit_plans_buttons())
+
+        try:
+            parts = [p.strip() for p in ask.text.split("|")]
+            plan_id, label, price, duration = parts[0], parts[1], parts[2], parts[3]
+            days = parse_duration_to_days(duration)
+        except Exception:
+            return await ask.reply_text(
+                "⚠️ Invalid format. Use: id | label | price | duration",
+                reply_markup=await edit_plans_buttons()
+            )
+
+        await db.add_premium_plan(plan_id, label, price, days)
+        return await ask.reply_text(
+            f"✅ Added plan <b>{label}</b> — {price} ({days} days)",
+            reply_markup=await edit_plans_buttons()
+        )
+
+    if action == "removeplan":
+        await query.answer()
+        plans = await db.get_premium_plans()
+        ids = ", ".join(f"<code>{p['id']}</code>" for p in plans)
+        ask = await bot.ask(
+            msg.chat.id,
+            f"🗑 <b>Send the plan ID to remove</b>\n\nExisting: {ids}\n\n/cancel to abort."
+        )
+        if ask.text and ask.text.strip().lower() == "/cancel":
+            return await ask.reply_text("❌ Cancelled.", reply_markup=await edit_plans_buttons())
+
+        plan_id = ask.text.strip()
+        await db.remove_premium_plan(plan_id)
+        return await ask.reply_text(
+            f"✅ Removed plan <code>{plan_id}</code> (if it existed).",
+            reply_markup=await edit_plans_buttons()
+        )
+
     if action == "edit_payment_info":
         await query.answer()
         settings = await db.get_bot_settings()
@@ -382,16 +455,21 @@ async def admin_callback(bot, query):
         await query.answer()
         ask = await bot.ask(
             msg.chat.id,
-            "➕ Send: <code>user_id days</code>\n"
-            "Example: <code>123456789 30</code> (30 days)\n"
-            "Send <code>0</code> for days to grant lifetime premium.\n\n/cancel to abort."
+            "➕ Send: <code>user_id duration</code>\n\n"
+            "Duration examples:\n"
+            "<code>123456789 1d</code> — 1 day\n"
+            "<code>123456789 1m</code> — 1 month\n"
+            "<code>123456789 2m</code> — 2 months\n"
+            "<code>123456789 1y</code> — 1 year\n"
+            "<code>123456789 0</code> — lifetime\n\n/cancel to abort."
         )
         if ask.text and ask.text.strip().lower() == "/cancel":
             return await ask.reply_text("❌ Cancelled.", reply_markup=premium_panel_buttons())
         try:
             parts = ask.text.split()
             target = int(parts[0])
-            days = int(parts[1]) if len(parts) > 1 else 0
+            duration = parts[1] if len(parts) > 1 else "0"
+            days = parse_duration_to_days(duration)
         except Exception:
             return await ask.reply_text("⚠️ Invalid format.", reply_markup=premium_panel_buttons())
 
