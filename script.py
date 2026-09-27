@@ -91,9 +91,24 @@ class  Script(object):
 ║┣⪼<b>📊 Cᴜʀʀᴇɴᴛ Sᴛᴀᴛᴜs:</b> <code>{}</code>
 ║┃
 ║┣⪼<b>𖨠 Pᴇʀᴄᴇɴᴛᴀɢᴇ:</b> <code>{}</code> %
+║┃
+║┣⪼<b>🚀 Sᴘᴇᴇᴅ:</b> <code>{}</code> msg/min
+║┃
+║┣⪼<b>⏳ ETA:</b> <code>{}</code>
 ║╰━━━━━━━━━━━━━━━➣ 
 ╚════❰ {} ❱══❍⊱❁۪۪
 """
+  # Used by the "tap progress bar for details" button — recomputed fresh
+  # from live state at tap-time rather than baked into old callback_data.
+  PROGRESS = """<b>📊 {}% complete</b>
+
+🕵 Fetched: {}
+✅ Forwarded: {}
+⏭ Remaining: {}
+📌 Status: {}
+🚀 Speed: {} msg/min
+⏳ ETA: {}
+⏱ Uptime: {}"""
   DUPLICATE_TEXT = """
 ╔════❰ ᴜɴᴇǫᴜɪғʏ sᴛᴀᴛᴜs ❱═❍⊱❁۪۪
 ║╭━━━━━━━━━━━━━━━➣
