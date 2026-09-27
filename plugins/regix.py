@@ -9,7 +9,7 @@ import time, re
 import asyncio 
 import logging
 import random
-from .utils import STS
+from .utils import STS, format_duration
 from database import Db, db
 from .test import CLIENT, get_client, iter_messages
 from config import Config, temp
@@ -28,6 +28,7 @@ CLIENT = CLIENT()
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 TEXT = Script.TEXT
+PROGRESS = Script.PROGRESS
 
 # Don't Remove Credit Tg - @VJ_Botz
 # Subscribe YouTube Channel For Amazing Bot https://youtube.com/@Tech_VJ
@@ -256,21 +257,19 @@ async def msg_edit(msg, text, button=None, wait=None):
 async def edit(user, msg, title, status, sts):
    i = sts.get(full=True)
    status = 'Forwarding' if status == 5 else f"sleeping {status} s" if str(status).isnumeric() else status
-   percentage = "{:.0f}".format(float(i.fetched)*100/float(i.total))
-   text = TEXT.format(i.fetched, i.total_files, i.duplicate, i.deleted, i.skip, i.filtered, status, percentage, title)
+   total_for_pct = i.total if i.total else 1   # avoid ZeroDivisionError on an empty range
+   percentage = "{:.0f}".format(float(i.fetched)*100/float(total_for_pct))
+   speed = sts.speed_per_min()
+   speed_str = f"{speed:.1f}" if speed > 0 else "—"
+   eta_str = sts.eta_string()
+   text = TEXT.format(i.fetched, i.total_files, i.duplicate, i.deleted, i.skip, i.filtered, status, percentage, speed_str, eta_str, title)
    await update_forward(user_id=user, last_id=None, start_time=i.start, limit=i.limit, chat_id=i.FROM, toid=i.TO, forward_id=None, msg_id=msg.id, fetched=i.fetched, deleted=i.deleted, total=i.total_files, duplicate=i.duplicate, skip=i.skip, filterd=i.filtered)
-   now = time.time()
-   diff = int(now - i.start)
-   speed = sts.divide(i.fetched, diff)
-   elapsed_time = round(diff) * 1000
-   time_to_completion = round(sts.divide(i.total - i.fetched, int(speed))) * 1000
-   estimated_total_time = elapsed_time + time_to_completion  
    progress = "●{0}{1}".format(
-       ''.join(["●" for i in range(math.floor(int(percentage) / 4))]),
-       ''.join(["○" for i in range(24 - math.floor(int(percentage) / 4))]))
-   button =  [[InlineKeyboardButton(progress, f'fwrdstatus#{status}#{estimated_total_time}#{percentage}#{i.id}')]]
-   estimated_total_time = TimeFormatter(milliseconds=estimated_total_time)
-   estimated_total_time = estimated_total_time if estimated_total_time != '' else '0 s'
+       ''.join(["●" for _ in range(math.floor(int(percentage) / 4))]),
+       ''.join(["○" for _ in range(24 - math.floor(int(percentage) / 4))]))
+   # Callback only needs the task id + status — everything else is
+   # recomputed live from STS when the button is tapped (see status_msg).
+   button = [[InlineKeyboardButton(progress, f'fwrdstatus#{status}#{i.id}')]]
    if status in ["cancelled", "completed"]:
       button.append([InlineKeyboardButton('• ᴄᴏᴍᴘʟᴇᴛᴇᴅ ​•', url='https://t.me/Prime_SpoT')])
    else:
@@ -529,20 +528,23 @@ async def resume_command(client, message):
 
 @Client.on_callback_query(filters.regex(r'^fwrdstatus'))
 async def status_msg(bot, msg):
-    _, status, est_time, percentage, frwd_id = msg.data.split("#")
+    _, status, frwd_id = msg.data.split("#")
     sts = STS(frwd_id)
     if not sts.verify():
-       fetched, forwarded, remaining = 0
+       fetched = forwarded = remaining = 0
+       percentage, speed_str, eta_str, uptime = 0, "—", "—", "—"
     else:
        fetched, limit, forwarded = sts.get('fetched'), sts.get('limit'), sts.get('total_files')
-       remaining = limit - fetched 
-    est_time = TimeFormatter(milliseconds=est_time)
-    start_time = sts.get('start')
-    uptime = await get_bot_uptime(start_time)
-    total = sts.get('limit') - sts.get('fetched')
-    time_to_comple = await complete_time(total)
-    est_time = est_time if (est_time != '' or status not in ['completed', 'cancelled']) else '0 s'
-    return await msg.answer(PROGRESS.format(percentage, fetched, forwarded, remaining, status, time_to_comple, uptime), show_alert=True)
+       remaining = max(limit - fetched, 0)
+       percentage = int(fetched * 100 / limit) if limit else 0
+       speed = sts.speed_per_min()
+       speed_str = f"{speed:.1f}" if speed > 0 else "—"
+       eta_str = sts.eta_string()
+       uptime = await get_bot_uptime(sts.get('start'))
+    return await msg.answer(
+        PROGRESS.format(percentage, fetched, forwarded, remaining, status, speed_str, eta_str, uptime),
+        show_alert=True
+    )
 
 # Don't Remove Credit Tg - @VJ_Botz
 # Subscribe YouTube Channel For Amazing Bot https://youtube.com/@Tech_VJ

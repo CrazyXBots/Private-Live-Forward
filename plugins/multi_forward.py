@@ -133,6 +133,19 @@ def task_detail_text(t: dict) -> str:
     skip   = t.get("skip", 0)
     filt   = t.get("filtered", 0)
     pct    = int(float(fetch) * 100 / float(total)) if total > 0 else 0
+
+    # Live speed/ETA only exist while the task's coroutine is running in this
+    # process (STS is in-memory). After a restart, before the task resumes,
+    # there's nothing live to show yet.
+    live = STS(tid)
+    if t.get("active") and live.verify():
+        speed = live.speed_per_min()
+        speed_line = f"<b>🚀 Speed :</b> <code>{speed:.1f} msg/min</code>\n" if speed > 0 else "<b>🚀 Speed :</b> <code>calculating…</code>\n"
+        eta_line = f"<b>⏳ ETA :</b> <code>{live.eta_string()}</code>\n"
+    else:
+        speed_line = ""
+        eta_line = ""
+
     return (
         f"📋 <b>TASK: {tid}</b>\n\n"
         f"<b>STATUS :</b> {sts}\n"
@@ -144,6 +157,7 @@ def task_detail_text(t: dict) -> str:
         f"<b>🗑 Deleted :</b> <code>{deld}</code>\n"
         f"<b>🪆 Skipped :</b> <code>{skip}</code>\n"
         f"<b>🔁 Filtered :</b> <code>{filt}</code>\n"
+        f"{speed_line}{eta_line}"
         f"<b>📊 Progress :</b> <code>{pct}%</code>"
     )
 
@@ -619,16 +633,13 @@ async def _edit_task(user_id, task_id, msg, title, status, sts):
     status_str = "Forwarding" if status == 5 else (f"sleeping {status}s" if str(status).isnumeric() else status)
     total      = max(i.total, 1)
     percentage = "{:.0f}".format(float(i.fetched) * 100 / float(total))
+    speed      = sts.speed_per_min()
+    speed_str  = f"{speed:.1f}" if speed > 0 else "—"
+    eta_str    = sts.eta_string()
     text       = Script.TEXT.format(
         i.fetched, i.total_files, i.duplicate,
-        i.deleted, i.skip, i.filtered, status_str, percentage, title
+        i.deleted, i.skip, i.filtered, status_str, percentage, speed_str, eta_str, title
     )
-    now         = time.time()
-    diff        = max(int(now - i.start), 1)
-    speed       = sts.divide(i.fetched, diff)
-    elapsed_ms  = round(diff) * 1000
-    remain_ms   = round(sts.divide(i.total - i.fetched, int(speed) if speed else 1)) * 1000
-    total_ms    = elapsed_ms + remain_ms
     progress    = "●{0}{1}".format(
         "".join(["●" for _ in range(math.floor(int(percentage) / 4))]),
         "".join(["○" for _ in range(24 - math.floor(int(percentage) / 4))])
